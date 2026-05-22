@@ -2,7 +2,9 @@
 // Newlines inside ( ) are always ignored — JS-style.
 // Newlines at statement level are significant (they terminate statements).
 
-program: (_NEWLINE | statement)*
+program: (_NEWLINE | _SEMI | statement)*
+
+_SEMI: ";"
 
 statement: assign
          | use_decl
@@ -22,13 +24,15 @@ ns_decl: "ns" NAME "{" _NEWLINE* (assign _NEWLINE*)* "}"
 // Expression hierarchy — lowest precedence at top
 ?expr: lambda_expr
 
+ARROW: "->"
+
 ?lambda_expr: pipe_expr
-            | NAME "=>" expr                      -> lambda_expr
-            | "(" NL* NAME ("," NL* NAME)* NL* ")" "=>" expr -> lambda_expr
-            | "(" NL* ")" "=>" expr               -> lambda_expr_noargs
-            | NAME "=>" "(" NL* paren_expr NL* ")" -> lambda_body
-            | "(" NL* NAME ("," NL* NAME)* NL* ")" "=>" "(" NL* paren_expr NL* ")" -> lambda_body
-            | "(" NL* ")" "=>" "(" NL* paren_expr NL* ")"  -> lambda_body_noargs
+            | NAME ARROW expr                      -> lambda_expr
+            | "(" NL* NAME ("," NL* NAME)* NL* ")" ARROW expr -> lambda_expr
+            | "(" NL* ")" ARROW expr               -> lambda_expr_noargs
+            | NAME ARROW "(" NL* paren_expr NL* ")" -> lambda_body
+            | "(" NL* NAME ("," NL* NAME)* NL* ")" ARROW "(" NL* paren_expr NL* ")" -> lambda_body
+            | "(" NL* ")" ARROW "(" NL* paren_expr NL* ")"  -> lambda_body_noargs
 
 ?pipe_expr: cmp_expr
           | pipe_expr "|>" pipe_step
@@ -51,6 +55,7 @@ QUIET: "quiet"
 ?mul_expr: postfix
          | mul_expr STAR  postfix  -> binop
          | mul_expr SLASH postfix  -> binop
+         | mul_expr MOD   postfix  -> binop
 
 GT:    ">"
 LT:    "<"
@@ -62,6 +67,7 @@ PLUS:  "+"
 MINUS: "-"
 STAR:  "*"
 SLASH: "/"
+MOD:   "%"
 
 // Postfix: field access and calls, left-associative
 ?postfix: atom
@@ -77,16 +83,18 @@ SLASH: "/"
      | "true"                      -> true_lit
      | "false"                     -> false_lit
      | "none"                      -> none_lit
-     | "(" expr ")"
-     | "(" expr ("," expr)+ ")"    -> tuple_lit
+     | "(" NL* expr NL* ")"
+     | "(" NL* expr (NL* "," NL* expr)+ NL* ")"    -> tuple_lit
+     | "(" NL* expr (NL+ expr)+ NL* ")"             -> seq_expr
      | list_lit
      | obj_lit
      | match_expr
      | range_expr
      | spread_expr
 
-// paren_expr: expr with newline-continued pipes — only used in lambda bodies
-paren_expr: expr (NL+ "|>" pipe_step)*  -> paren_pipe
+// paren_expr: sequence of exprs separated by NL/; with optional pipe continuations
+paren_expr: paren_stmt (NL+ paren_stmt)* -> paren_seq
+paren_stmt: expr (NL* "|>" pipe_step)*   -> paren_pipe
 
 spread_expr: "..." postfix
 
@@ -122,8 +130,8 @@ pattern: ">"  literal  -> pat_gt
 
 literal: INT | FLOAT | ESCAPED_STRING
 
-// NL: newline that is ignored inside ( ) — aliased for readability
-NL: NEWLINE
+// NL: newline or semicolon, ignored inside ( ) — aliased for readability
+NL: NEWLINE | ";"
 
 // Terminals
 NAME: /(?!(true|false|none|ns|use|as|quiet)\b)[a-zA-Z_][a-zA-Z0-9_]*/

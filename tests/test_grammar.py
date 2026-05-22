@@ -99,11 +99,11 @@ def test_pipe_quiet():
 
 # --- Lambdas ---
 
-def test_lambda_single():   ok("x => x * 2")
-def test_lambda_multi():    ok("(x, y) => x + y")
-def test_lambda_no_args():  ok("() => 42")
-def test_lambda_assign():   ok("double = x => x * 2")
-def test_lambda_in_pipe():  ok("data |> map(row => row)")
+def test_lambda_single():   ok("x -> x * 2")
+def test_lambda_multi():    ok("(x, y) -> x + y")
+def test_lambda_no_args():  ok("() -> 42")
+def test_lambda_assign():   ok("double = x -> x * 2")
+def test_lambda_in_pipe():  ok("data |> map(row -> row)")
 
 
 # --- Collections ---
@@ -206,7 +206,7 @@ ns pipeline {
 def test_ns_with_assigns():
     ok("""
 ns pipeline {
-  clean = data => data
+  clean = data -> data
   threshold = 18
 }
 """)
@@ -220,6 +220,72 @@ def test_use_as():          ok('use "./transforms" as t')
 def test_use_name_as():     ok("use ml as myml")
 
 
+# --- Modulo ---
+
+def test_modulo():          ok("x % 3")
+def test_modulo_expr():     ok("it.age % 2 == 0")
+
+
+# --- Arrow (lambda) ---
+
+def test_arrow_single():    ok("x -> x * 2")
+def test_arrow_multi():     ok("(x, y) -> x + y")
+def test_arrow_noargs():    ok("() -> 42")
+
+
+# --- Semicolons ---
+
+def test_semi_in_parens():  ok("(print(x); f(x))")
+def test_semi_multiline():
+    ok("""
+f = x -> (
+  print(x);
+  f(x - 1)
+)
+""")
+
+
+# --- Sequence expressions ---
+
+def test_seq_two():         ok("(a; b)")
+def test_seq_three():       ok("(a; b; c)")
+def test_seq_with_pipe():
+    ok("""
+f = x -> (
+  print(x)
+  |> f()
+)
+""")
+
+
+# --- Multiline lambda body ---
+
+def test_lambda_body_multiline():
+    ok("""
+clean = data -> (
+  data
+    |> filter(it.age > 18)
+    |> filter(it.income > 0)
+)
+""")
+
+def test_lambda_body_multiargs():
+    ok("""
+process = (x, y) -> (
+  x + y
+)
+""")
+
+
+# --- Multiline kwarg value ---
+
+def test_kwarg_multiline_value():
+    ok("""
+data |> add(label:
+  match(it.x, > 0: "pos", _: "neg"))
+""")
+
+
 # --- Full example from spec ---
 
 def test_full_spec_example():
@@ -227,8 +293,8 @@ def test_full_spec_example():
 use ml
 use viz
 
-clean = data => data
-engineer = data => data
+clean = data -> data
+engineer = data -> data
 
 result = load("customers.csv")
   |> clean()

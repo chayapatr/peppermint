@@ -161,23 +161,23 @@ def test_pipe_multiline():
 # --- Lambda ---
 
 def test_lambda_single_param():
-    node = expr("x => x * 2")
+    node = expr("x -> x * 2")
     assert isinstance(node, Lambda)
     assert node.params == ["x"]
     assert isinstance(node.body, BinOp)
 
 def test_lambda_multi_param():
-    node = expr("(x, y) => x + y")
+    node = expr("(x, y) -> x + y")
     assert isinstance(node, Lambda)
     assert node.params == ["x", "y"]
 
 def test_lambda_no_params():
-    node = expr("() => 42")
+    node = expr("() -> 42")
     assert isinstance(node, Lambda)
     assert node.params == []
 
 def test_lambda_assign():
-    node = stmt("double = x => x * 2")
+    node = stmt("double = x -> x * 2")
     assert isinstance(node, Assign)
     assert isinstance(node.value, Lambda)
 
@@ -271,11 +271,75 @@ def test_use_as():
     assert node.alias == "t"
 
 def test_ns_decl():
-    node = stmt("ns pipeline {\n  clean = x => x\n}")
+    node = stmt("ns pipeline {\n  clean = x -> x\n}")
     assert isinstance(node, NsDecl)
     assert node.name == "pipeline"
     assert len(node.body) == 1
     assert isinstance(node.body[0], Assign)
+
+
+# --- Modulo ---
+
+def test_binop_mod():
+    node = expr("x % 3")
+    assert isinstance(node, BinOp)
+    assert node.op == "%"
+
+def test_mod_in_cmp():
+    node = expr("it.age % 2 == 0")
+    assert isinstance(node, BinOp)
+    assert node.op == "=="
+    assert isinstance(node.left, BinOp)
+    assert node.left.op == "%"
+
+
+# --- Semicolons / Block ---
+
+def test_seq_two_exprs():
+    node = expr("(a; b)")
+    assert isinstance(node, Block)
+    assert len(node.stmts) == 2
+
+def test_seq_three_exprs():
+    node = expr("(a; b; c)")
+    assert isinstance(node, Block)
+    assert len(node.stmts) == 3
+
+def test_seq_in_lambda():
+    node = expr("x -> (print(x); x)")
+    assert isinstance(node, Lambda)
+    assert isinstance(node.body, Block)
+    assert len(node.body.stmts) == 2
+
+def test_seq_newline_separated():
+    node = parse("f = x -> (\n  print(x)\n  x\n)").body[0]
+    assert isinstance(node.value, Lambda)
+    assert isinstance(node.value.body, Block)
+
+
+# --- Recursion (self-reference in lambda) ---
+
+def test_recursive_assign_parses():
+    node = parse("fact = n -> match(n, == 0: 1, _: n * fact(n - 1))").body[0]
+    assert isinstance(node, Assign)
+    assert isinstance(node.value, Lambda)
+
+
+# --- Multiline lambda body ---
+
+def test_lambda_body_multiline():
+    node = parse("""
+clean = data -> (
+  data
+    |> filter(it.age > 18)
+    |> filter(it.income > 0)
+)
+""").body[0]
+    assert isinstance(node, Assign)
+    lam = node.value
+    assert isinstance(lam, Lambda)
+    assert lam.params == ["data"]
+    assert isinstance(lam.body, Pipe)
 
 
 # --- Full spec example ---
@@ -285,7 +349,7 @@ def test_full_example_parses():
 use ml
 use viz
 
-clean = data => data
+clean = data -> data
 
 result = load("customers.csv")
   |> clean()

@@ -79,19 +79,29 @@ Use inside a pipe step:
 
 ## Functions
 
-Functions are just assignments with `=>`:
+Functions are just assignments with `->`:
 
 ```
-double = x => x * 2
+double = x -> x * 2
 
-clean = data => (
+clean = data -> (
   data
     |> filter(it.age > 18)
     |> filter(it.income > 0)
 )
 ```
 
-Parentheses let the body span multiple lines — newlines inside `( )` are ignored.
+Parentheses let the body span multiple lines — newlines inside `( )` are ignored. Semicolons work as statement separators inside `( )`:
+
+```
+f = x -> (print(x); f(x - 1))
+```
+
+Functions can call themselves recursively:
+
+```
+fact = n -> match(n, == 0: 1, _: n * fact(n - 1))
+```
 
 Call them like any built-in:
 
@@ -127,7 +137,7 @@ Group related functions with `ns`:
 
 ```
 ns transforms {
-  clean = data => (
+  clean = data -> (
     data
       |> filter(it.age > 18)
       |> filter(it.income > 0)
@@ -163,10 +173,10 @@ use "./transforms" as t
 ## Operators
 
 ```
-+  -  *  /          # arithmetic
++  -  *  /  %        # arithmetic
 >  <  >=  <=  ==  != # comparison
 |>                   # pipe
-=>                   # lambda
+->                   # lambda
 ...                  # spread
 ```
 

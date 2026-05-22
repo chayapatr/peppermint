@@ -72,6 +72,16 @@ class PeppermintTransformer(Transformer):
             return source
         return Pipe(steps=[source] + extra)
 
+    def paren_seq(self, items):
+        exprs = [i for i in items if not (isinstance(i, Token) and i.type in ("NL", "NEWLINE"))]
+        if len(exprs) == 1:
+            return exprs[0]
+        return Block(stmts=exprs)
+
+    def seq_expr(self, items):
+        exprs = [i for i in items if not (isinstance(i, Token) and i.type in ("NL", "NEWLINE"))]
+        return Block(stmts=exprs)
+
     # --- Statements ---
 
     def assign(self, items):
@@ -239,14 +249,14 @@ class PeppermintTransformer(Transformer):
 
     def lambda_expr(self, items):
         body = items[-1]
-        params = [str(t) for t in items[:-1] if isinstance(t, Token) and t.type not in ("NL", "NEWLINE")]
+        params = [str(t) for t in items[:-1] if isinstance(t, Token) and t.type not in ("NL", "NEWLINE", "ARROW")]
         return Lambda(params=params, body=body)
 
     def lambda_expr_noargs(self, items):
         return Lambda(params=[], body=items[0])
 
     def lambda_body(self, items):
-        non_nl = [i for i in items if not (isinstance(i, Token) and i.type in ("NL", "NEWLINE"))]
+        non_nl = [i for i in items if not (isinstance(i, Token) and i.type in ("NL", "NEWLINE", "ARROW"))]
         body = non_nl[-1]
         params = [str(t) for t in non_nl[:-1] if isinstance(t, Token)]
         return Lambda(params=params, body=body)

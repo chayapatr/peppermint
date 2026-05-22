@@ -96,6 +96,7 @@ class Interpreter:
             case BinOp():               return self.eval_binop(node, env)
             case Call():                return self.eval_call(node, None, env)
             case Pipe():                return self.eval_pipe(node, env)
+            case Block():               return self.eval_block(node, env)
             case Match():               return self.eval_match(node, env)
             case ListLit():             return [self.eval(i, env) for i in node.items]
             case TupleLit():            return tuple(self.eval(i, env) for i in node.items)
@@ -109,6 +110,8 @@ class Interpreter:
     def eval_assign(self, node: Assign, env: Env) -> Any:
         value = self.eval(node.value, env)
         env.set(node.name, value)
+        if isinstance(value, PmFunction):
+            value.closure.set(node.name, value)
         return value
 
     # --- Use / Ns ---
@@ -157,11 +160,14 @@ class Interpreter:
     def eval_binop(self, node: BinOp, env: Env) -> Any:
         left = self.eval(node.left, env)
         right = self.eval(node.right, env)
+        left = left.value if isinstance(left, Ok) else left
+        right = right.value if isinstance(right, Ok) else right
         match node.op:
             case "+":  return left + right
             case "-":  return left - right
             case "*":  return left * right
             case "/":  return left / right
+            case "%":  return left % right
             case ">":  return left > right
             case "<":  return left < right
             case ">=": return left >= right
@@ -186,6 +192,12 @@ class Interpreter:
         return result
 
     # --- Pipe ---
+
+    def eval_block(self, node: Block, env: Env) -> Any:
+        result = None
+        for stmt in node.stmts:
+            result = self.eval(stmt, env)
+        return result
 
     def eval_pipe(self, node: Pipe, env: Env) -> Any:
         # First step is the source expression
@@ -264,9 +276,11 @@ class Interpreter:
 
         # Call
         if isinstance(fn, PmFunction):
-            # PmFunctions get fully evaluated args
-            args = pre + [self.eval(a, env) for a in node.args]
-            kwargs = {k: self.eval(v, env) for k, v in node.kwargs.items()}
+            # PmFunctions get fully evaluated args, unwrapped from Ok
+            def _unwrap(v):
+                return v.value if isinstance(v, Ok) else v
+            args = pre + [_unwrap(self.eval(a, env)) for a in node.args]
+            kwargs = {k: _unwrap(self.eval(v, env)) for k, v in node.kwargs.items()}
             return self._call_pm_function(fn, args, kwargs, node.block, env)
         elif callable(fn):
             # Stdlib Python functions: pass AST nodes for non-pipe args so they

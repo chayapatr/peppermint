@@ -1,12 +1,12 @@
 # 02_transform.pep — reusable transforms via named functions
 
-clean = data => (
+clean = data -> (
   data
     |> filter(it.age > 18)
     |> filter(it.income > 0)
 )
 
-engineer = data => (
+engineer = data -> (
   data
     |> add(income_per_year: it.income)
     |> add(seniority: match(it.age, > 50: "senior", > 35: "mid", _: "junior"))

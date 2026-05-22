@@ -26,6 +26,24 @@ def _eval_arg(arg, interp, env):
     return arg
 
 
+def _to_list(data) -> tuple[list, bool]:
+    """Return (items, is_object_list). Raises TypeError for non-list types."""
+    if isinstance(data, ListValue):
+        return data.rows, True
+    if isinstance(data, list):
+        return data, False
+    raise TypeError(f"expected a List, got {type(data).__name__}")
+
+
+def _from_list(items: list, is_object_list: bool):
+    """Wrap items back into ListValue or plain list based on actual content."""
+    if items and isinstance(items[0], dict):
+        return _list_value(items)
+    if is_object_list and not items:
+        return _list_value([])
+    return items
+
+
 def load(path, _interp=None, _env=None, **_) -> Ok | Err:
     try:
         path = _eval_arg(path, _interp, _env)
@@ -57,31 +75,31 @@ def save(data: ListValue, path, _interp=None, _env=None, **_) -> Ok | Err:
         return Err(str(e))
 
 
-def filter_(data: ListValue, pred, _interp=None, _env=None, **_) -> Ok | Err:
+def filter_(data, pred, _interp=None, _env=None, **_) -> Ok | Err:
     try:
+        items, is_obj = _to_list(data)
         fn = _interp.make_row_fn(pred, _env)
-        rows = []
-        for row in data.rows:
-            result = fn(row)
+        out = []
+        for item in items:
+            result = fn(item)
             result = result.value if hasattr(result, "value") else result
             if result:
-                rows.append(row)
-        return Ok(_list_value(rows))
+                out.append(item)
+        return Ok(_from_list(out, is_obj))
     except Exception as e:
         return Err(str(e))
 
 
-def map_(data: ListValue, transform, _interp=None, _env=None, **_) -> Ok | Err:
+def map_(data, transform, _interp=None, _env=None, **_) -> Ok | Err:
     try:
+        items, is_obj = _to_list(data)
         fn = _interp.make_row_fn(transform, _env)
-        rows = []
-        for row in data.rows:
-            result = fn(row)
+        out = []
+        for item in items:
+            result = fn(item)
             result = result.value if hasattr(result, "value") else result
-            if not isinstance(result, dict):
-                raise ValueError(f"map transform must return an object, got {type(result).__name__}")
-            rows.append(result)
-        return Ok(_list_value(rows))
+            out.append(result)
+        return Ok(_from_list(out, is_obj))
     except Exception as e:
         return Err(str(e))
 
@@ -144,20 +162,21 @@ def sort(data: ListValue, by=None, dir=None, _interp=None, _env=None, **_) -> Ok
         return Err(str(e))
 
 
-def reduce(data: ListValue, init, fn, _interp=None, _env=None, **_) -> Ok | Err:
+def reduce(data, init, fn, _interp=None, _env=None, **_) -> Ok | Err:
     try:
         import functools
+        items, _ = _to_list(data)
         init = _eval_arg(init, _interp, _env)
         from ..interpreter import PmFunction
         pm_fn = _interp.eval(fn, _env) if _interp else fn
 
-        def apply(acc, row):
+        def apply(acc, item):
             if isinstance(pm_fn, PmFunction):
-                result = _interp._call_pm_function(pm_fn, [acc, row], {}, None, _env)
+                result = _interp._call_pm_function(pm_fn, [acc, item], {}, None, _env)
                 return result.value if hasattr(result, "value") else result
-            return pm_fn(acc, row)
+            return pm_fn(acc, item)
 
-        result = functools.reduce(apply, data.rows, init)
+        result = functools.reduce(apply, items, init)
         return Ok(result)
     except Exception as e:
         return Err(str(e))

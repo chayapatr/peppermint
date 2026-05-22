@@ -1,13 +1,13 @@
 # 04_namespace.pep — user-defined namespaces
 
 ns transforms {
-  clean = data => (
+  clean = data -> (
     data
       |> filter(it.age > 18)
       |> filter(it.income > 0)
   )
 
-  label_region = data => (
+  label_region = data -> (
     data
       |> add(region_label: match(it.region,
           == "US": "United States",
@@ -17,7 +17,7 @@ ns transforms {
   )
 }
 
-load("examples/people.csv")wr
+load("examples/people.csv")
   |> transforms.clean()
   |> transforms.label_region()
   |> sort(by: "income", dir: "desc")

@@ -161,6 +161,11 @@ class Range:
     end: int
     loc: Loc = field(default_factory=lambda: NO_LOC)
 
+@dataclass
+class Block:
+    stmts: list   # list[Expr] — evaluates each, returns last
+    loc: Loc = field(default_factory=lambda: NO_LOC)
+
 # --- Statements ---
 
 @dataclass
