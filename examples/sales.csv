@@ -1,0 +1,13 @@
+region,product,revenue,units,month
+US,Widget,12000,400,Jan
+US,Gadget,8500,170,Jan
+EU,Widget,9200,310,Jan
+EU,Gadget,11000,220,Jan
+US,Widget,15000,500,Feb
+US,Gadget,7800,156,Feb
+EU,Widget,8100,270,Feb
+EU,Gadget,13500,270,Feb
+APAC,Widget,5500,180,Jan
+APAC,Gadget,4200,84,Jan
+APAC,Widget,6800,220,Feb
+APAC,Gadget,3900,78,Feb

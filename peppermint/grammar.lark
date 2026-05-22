@@ -1,0 +1,139 @@
+// Peppermint grammar
+// Newlines inside ( ) are always ignored — JS-style.
+// Newlines at statement level are significant (they terminate statements).
+
+program: (_NEWLINE | statement)*
+
+statement: assign
+         | use_decl
+         | ns_decl
+         | expr
+         | cont_pipe
+
+// A continuation pipe: starts with |> and attaches to previous statement
+cont_pipe: ("|>" pipe_step)+
+
+assign: NAME "=" expr
+
+use_decl: "use" (NAME | ESCAPED_STRING) ("as" NAME)?
+
+ns_decl: "ns" NAME "{" _NEWLINE* (assign _NEWLINE*)* "}"
+
+// Expression hierarchy — lowest precedence at top
+?expr: lambda_expr
+
+?lambda_expr: pipe_expr
+            | NAME "=>" expr                      -> lambda_expr
+            | "(" NL* NAME ("," NL* NAME)* NL* ")" "=>" expr -> lambda_expr
+            | "(" NL* ")" "=>" expr               -> lambda_expr_noargs
+            | NAME "=>" "(" NL* paren_expr NL* ")" -> lambda_body
+            | "(" NL* NAME ("," NL* NAME)* NL* ")" "=>" "(" NL* paren_expr NL* ")" -> lambda_body
+            | "(" NL* ")" "=>" "(" NL* paren_expr NL* ")"  -> lambda_body_noargs
+
+?pipe_expr: cmp_expr
+          | pipe_expr "|>" pipe_step
+
+pipe_step: postfix QUIET?
+QUIET: "quiet"
+
+?cmp_expr: add_expr
+         | cmp_expr GT  add_expr  -> binop
+         | cmp_expr LT  add_expr  -> binop
+         | cmp_expr GTE add_expr  -> binop
+         | cmp_expr LTE add_expr  -> binop
+         | cmp_expr EQ  add_expr  -> binop
+         | cmp_expr NEQ add_expr  -> binop
+
+?add_expr: mul_expr
+         | add_expr PLUS  mul_expr -> binop
+         | add_expr MINUS mul_expr -> binop
+
+?mul_expr: postfix
+         | mul_expr STAR  postfix  -> binop
+         | mul_expr SLASH postfix  -> binop
+
+GT:    ">"
+LT:    "<"
+GTE:   ">="
+LTE:   "<="
+EQ:    "=="
+NEQ:   "!="
+PLUS:  "+"
+MINUS: "-"
+STAR:  "*"
+SLASH: "/"
+
+// Postfix: field access and calls, left-associative
+?postfix: atom
+        | postfix "." NAME              -> field_access
+        | postfix "(" arglist? ")"            -> call_expr
+        | postfix "(" arglist? ")" block      -> call_with_block
+
+// Atom: base expressions
+?atom: NAME                        -> ident
+     | INT                         -> int_lit
+     | FLOAT                       -> float_lit
+     | ESCAPED_STRING              -> str_lit
+     | "true"                      -> true_lit
+     | "false"                     -> false_lit
+     | "none"                      -> none_lit
+     | "(" expr ")"
+     | "(" expr ("," expr)+ ")"    -> tuple_lit
+     | list_lit
+     | obj_lit
+     | match_expr
+     | range_expr
+     | spread_expr
+
+// paren_expr: expr with newline-continued pipes — only used in lambda bodies
+paren_expr: expr (NL+ "|>" pipe_step)*  -> paren_pipe
+
+spread_expr: "..." postfix
+
+range_expr: INT ".." INT
+
+list_lit: "[" NL* (expr (NL* "," NL* expr)*)? ","? NL* "]"
+
+obj_lit: "{" NL* (obj_entry (NL* "," NL* obj_entry)*)? ","? NL* "}"
+obj_entry: "..." postfix  -> obj_spread
+         | NAME ":" expr  -> obj_field
+
+// Block: sub-pipe steps inside { }
+block: "{" NL* ("|>" pipe_step NL*)+ "}"
+
+arglist: arg (NL* "," NL* arg)* ","?
+arg: NAME ":" NL* expr  -> kwarg
+   | expr                -> posarg
+
+// Match — newlines allowed freely inside ( )
+match_expr: "match" "(" NL* expr NL* "," NL* match_arm (NL* "," NL* match_arm)* NL* ","? NL* ")"
+match_arm: pattern ":" expr
+
+pattern: ">"  literal  -> pat_gt
+       | "<"  literal  -> pat_lt
+       | ">=" literal  -> pat_gte
+       | "<=" literal  -> pat_lte
+       | "==" literal  -> pat_eq
+       | "!=" literal  -> pat_neq
+       | "Ok"  "(" NAME ")"             -> pat_ok
+       | "Err" "(" NAME ")"             -> pat_err
+       | "(" pattern (NL* "," NL* pattern)+ ")" -> pat_tuple
+       | "_"                            -> pat_wildcard
+
+literal: INT | FLOAT | ESCAPED_STRING
+
+// NL: newline that is ignored inside ( ) — aliased for readability
+NL: NEWLINE
+
+// Terminals
+NAME: /(?!(true|false|none|ns|use|as|quiet)\b)[a-zA-Z_][a-zA-Z0-9_]*/
+
+%import common.INT
+%import common.FLOAT
+%import common.ESCAPED_STRING
+%import common.WS_INLINE
+%import common.NEWLINE
+
+_NEWLINE: NEWLINE
+%ignore WS_INLINE
+%ignore /#[^\n]*/

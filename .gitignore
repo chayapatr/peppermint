@@ -1,0 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# VS Code extension build
+vscode-peppermint/*.vsix
+vscode-peppermint/node_modules/
+
+# Dev scratch
+dump/

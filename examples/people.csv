@@ -1,0 +1,11 @@
+name,age,income,region,score
+alice,25,60000,US,0.82
+bob,17,30000,EU,0.45
+carol,32,80000,US,0.91
+dave,40,15000,APAC,0.33
+eve,22,45000,EU,0.71
+frank,55,120000,US,0.95
+grace,29,52000,APAC,0.68
+henry,19,22000,EU,0.51
+iris,38,95000,US,0.88
+jake,16,0,APAC,0.12
