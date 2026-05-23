@@ -1,22 +1,30 @@
+"""
+Peppermint viz stdlib — uses bridge for type conversion.
+"""
 from __future__ import annotations
-import matplotlib
-matplotlib.use("Agg")  # non-interactive by default; override with MPLBACKEND env var
-import matplotlib.pyplot as plt
-import pandas as pd
-from ..interpreter import Ok, Err, ListValue
+from ..bridge import ok, err, get_rows, to_python
 
 
-def _to_df(data: ListValue) -> pd.DataFrame:
-    return pd.DataFrame(data.rows)
+def _to_df(data):
+    import pandas as pd
+    return pd.DataFrame(get_rows(data))
 
 
-def scatter(data: ListValue, x: str, y: str, color: str = None, **_) -> Ok | Err:
+def scatter(data, x=None, y=None, color=None, label=None, _interp=None, _env=None, **_):
     try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        from ..bridge import to_python as _ev
+        x = _ev(x) if not isinstance(x, str) else x
+        y = _ev(y) if not isinstance(y, str) else y
+        color = _ev(color) if color is not None and not isinstance(color, str) else color
+
         df = _to_df(data)
         fig, ax = plt.subplots()
         if color and color in df.columns:
-            groups = df.groupby(color)
-            for name, group in groups:
+            for name, group in df.groupby(color):
                 ax.scatter(group[x], group[y], label=str(name), alpha=0.7)
             ax.legend()
         else:
@@ -26,13 +34,18 @@ def scatter(data: ListValue, x: str, y: str, color: str = None, **_) -> Ok | Err
         plt.tight_layout()
         plt.show()
         plt.close(fig)
-        return Ok(data)
+        return ok(data)
     except Exception as e:
-        return Err(str(e))
+        return err(str(e))
 
 
-def histogram(data: ListValue, col: str, **_) -> Ok | Err:
+def histogram(data, col=None, **_):
     try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        col = to_python(col) if not isinstance(col, str) else col
         df = _to_df(data)
         fig, ax = plt.subplots()
         ax.hist(df[col].dropna(), bins="auto", edgecolor="black")
@@ -41,14 +54,18 @@ def histogram(data: ListValue, col: str, **_) -> Ok | Err:
         plt.tight_layout()
         plt.show()
         plt.close(fig)
-        return Ok(data)
+        return ok(data)
     except Exception as e:
-        return Err(str(e))
+        return err(str(e))
 
 
-def heatmap(data: ListValue, **_) -> Ok | Err:
+def heatmap(data, **_):
     try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
         import seaborn as sns
+
         df = _to_df(data)
         num_df = df.select_dtypes(include="number")
         fig, ax = plt.subplots(figsize=(10, 8))
@@ -56,12 +73,12 @@ def heatmap(data: ListValue, **_) -> Ok | Err:
         plt.tight_layout()
         plt.show()
         plt.close(fig)
-        return Ok(data)
+        return ok(data)
     except Exception as e:
-        return Err(str(e))
+        return err(str(e))
 
 
-def plot(data: ListValue, **_) -> Ok | Err:
+def plot(data, **_):
     try:
         df = _to_df(data)
         num_cols = df.select_dtypes(include="number").columns.tolist()
@@ -70,16 +87,20 @@ def plot(data: ListValue, **_) -> Ok | Err:
         elif len(num_cols) == 1:
             return histogram(data, col=num_cols[0])
         else:
-            return Err("plot(): no numeric columns to visualize")
+            return err("plot(): no numeric columns to visualize")
     except Exception as e:
-        return Err(str(e))
+        return err(str(e))
 
 
-def grid(*datasets, **_) -> Ok | Err:
+def grid(*datasets, **_):
     try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
         n = len(datasets)
         if n == 0:
-            return Err("grid() requires at least one dataset")
+            return err("grid() requires at least one dataset")
         fig, axes = plt.subplots(1, n, figsize=(6 * n, 5))
         if n == 1:
             axes = [axes]
@@ -93,9 +114,9 @@ def grid(*datasets, **_) -> Ok | Err:
         plt.tight_layout()
         plt.show()
         plt.close(fig)
-        return Ok(datasets[0] if datasets else None)
+        return ok(datasets[0] if datasets else None)
     except Exception as e:
-        return Err(str(e))
+        return err(str(e))
 
 
 def build_viz_env() -> dict:

@@ -117,15 +117,26 @@ class Interpreter:
     # --- Use / Ns ---
 
     def eval_use(self, node: UseDecl, env: Env) -> None:
-        if node.path in ("ml", "viz", "math", "io"):
-            ns = env.get(f"_ns_{node.path}")
-            target = node.alias or node.path
+        import os
+        path = node.path
+
+        if path in ("ml", "viz", "math", "io"):
+            # stdlib namespace — load on demand
+            from .stdlib import load_stdlib
+            ns = load_stdlib(path)
+            target = node.alias or path
             env.set(target, ns)
+        elif path.endswith(".py"):
+            # Python file — load via bridge
+            from .bridge import load_python_file
+            if not os.path.isabs(path):
+                path = os.path.join(os.getcwd(), path)
+            fns = load_python_file(path)
+            alias = node.alias or os.path.splitext(os.path.basename(path))[0]
+            env.set(alias, fns)
         else:
-            # file import — eval the file and store under alias
-            import os
+            # .pep file — eval and expose as namespace
             from .parser import parse as pep_parse
-            path = node.path
             if not os.path.isabs(path):
                 path = os.path.join(os.getcwd(), path)
             src = open(path).read()

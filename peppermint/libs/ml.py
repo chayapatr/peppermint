@@ -1,10 +1,29 @@
+"""
+Peppermint ml stdlib — uses bridge for type conversion.
+Python functions receive plain list[dict], return plain list[dict].
+"""
 from __future__ import annotations
-import numpy as np
-import pandas as pd
-from ..interpreter import Ok, Err, ListValue, PmRange
+from ..bridge import ok, err, get_rows, make_list, from_python, to_python
 
 
-def _eval(arg, interp, env):
+def _to_df(data):
+    import pandas as pd
+    return pd.DataFrame(get_rows(data))
+
+
+def _from_df(df):
+    import pandas as pd
+    rows = df.to_dict(orient="records")
+    return make_list(rows)
+
+
+def _numeric_cols(df):
+    import numpy as np
+    return df.select_dtypes(include=[np.number]).columns.tolist()
+
+
+def _eval_arg(arg, interp, env):
+    from ..interpreter import PmRange
     if interp and arg is not None and not isinstance(arg, (int, float, str, bool, PmRange)):
         try:
             return interp.eval(arg, env)
@@ -13,26 +32,14 @@ def _eval(arg, interp, env):
     return arg
 
 
-def _to_df(data: ListValue) -> pd.DataFrame:
-    return pd.DataFrame(data.rows)
-
-
-def _from_df(df: pd.DataFrame) -> ListValue:
-    rows = df.to_dict(orient="records")
-    schema = {k: type(v) for k, v in rows[0].items()} if rows else {}
-    return ListValue(rows=rows, schema=schema)
-
-
-def _numeric_cols(df: pd.DataFrame) -> list[str]:
-    return df.select_dtypes(include=[np.number]).columns.tolist()
-
-
-def kmeans(data: ListValue, k=5, score=None, _interp=None, _env=None, **_) -> Ok | Err:
+def kmeans(data, k=5, _interp=None, _env=None, **_):
     try:
         from sklearn.cluster import KMeans
         from sklearn.metrics import silhouette_score
+        from ..interpreter import PmRange
+        import sys
 
-        k = _eval(k, _interp, _env)
+        k = _eval_arg(k, _interp, _env)
         df = _to_df(data)
         num_cols = _numeric_cols(df)
         X = df[num_cols].dropna()
@@ -47,7 +54,6 @@ def kmeans(data: ListValue, k=5, score=None, _interp=None, _env=None, **_) -> Ok
                     if s > best_score:
                         best_k, best_score, best_labels = ki, s, labels
             labels = best_labels
-            import sys
             print(f"kmeans: best k={best_k}, silhouette={best_score:.3f}", file=sys.stderr)
         else:
             model = KMeans(n_clusters=int(k), random_state=42, n_init="auto")
@@ -55,16 +61,16 @@ def kmeans(data: ListValue, k=5, score=None, _interp=None, _env=None, **_) -> Ok
 
         df = df.copy()
         df.loc[X.index, "cluster"] = labels.astype(int)
-        return Ok(_from_df(df))
+        return ok(_from_df(df))
     except Exception as e:
-        return Err(str(e))
+        return err(str(e))
 
 
-def ols(data: ListValue, target=None, _interp=None, _env=None, **_) -> Ok | Err:
+def ols(data, target=None, _interp=None, _env=None, **_):
     try:
         from sklearn.linear_model import LinearRegression
 
-        target = _eval(target, _interp, _env)
+        target = _eval_arg(target, _interp, _env)
         df = _to_df(data)
         num_cols = [c for c in _numeric_cols(df) if c != target]
         X = df[num_cols].dropna()
@@ -74,16 +80,16 @@ def ols(data: ListValue, target=None, _interp=None, _env=None, **_) -> Ok | Err:
         model.fit(X, y)
         df = df.copy()
         df.loc[X.index, "predicted"] = model.predict(X)
-        return Ok(_from_df(df))
+        return ok(_from_df(df))
     except Exception as e:
-        return Err(str(e))
+        return err(str(e))
 
 
-def umap(data: ListValue, dims=2, _interp=None, _env=None, **_) -> Ok | Err:
+def umap(data, dims=2, _interp=None, _env=None, **_):
     try:
         import umap as umap_lib
 
-        dims = int(_eval(dims, _interp, _env))
+        dims = int(_eval_arg(dims, _interp, _env))
         df = _to_df(data)
         num_cols = _numeric_cols(df)
         X = df[num_cols].dropna()
@@ -94,15 +100,16 @@ def umap(data: ListValue, dims=2, _interp=None, _env=None, **_) -> Ok | Err:
         df = df.copy()
         for i in range(dims):
             df.loc[X.index, f"umap{i+1}"] = embedding[:, i]
-        return Ok(_from_df(df))
+        return ok(_from_df(df))
     except Exception as e:
-        return Err(str(e))
+        return err(str(e))
 
 
-def embed(data: ListValue, col: str, model: str = "all-MiniLM-L6-v2", **_) -> Ok | Err:
+def embed(data, col=None, model="all-MiniLM-L6-v2", _interp=None, _env=None, **_):
     try:
         from sentence_transformers import SentenceTransformer
 
+        col = _eval_arg(col, _interp, _env)
         df = _to_df(data)
         texts = df[col].tolist()
         m = SentenceTransformer(model)
@@ -110,27 +117,27 @@ def embed(data: ListValue, col: str, model: str = "all-MiniLM-L6-v2", **_) -> Ok
 
         df = df.copy()
         df["embedding"] = list(embeddings)
-        return Ok(_from_df(df))
+        return ok(_from_df(df))
     except Exception as e:
-        return Err(str(e))
+        return err(str(e))
 
 
-def silhouette(data: ListValue, **_) -> Ok | Err:
+def silhouette(data, **_):
     try:
         from sklearn.metrics import silhouette_score
+        import sys
 
         df = _to_df(data)
         if "cluster" not in df.columns:
-            return Err("silhouette() requires a 'cluster' column — run kmeans first")
+            return err("silhouette() requires a 'cluster' column — run kmeans first")
         num_cols = [c for c in _numeric_cols(df) if c != "cluster"]
         X = df[num_cols].dropna()
         labels = df.loc[X.index, "cluster"]
         score = silhouette_score(X, labels)
-        import sys
         print(f"silhouette score: {score:.4f}", file=sys.stderr)
-        return Ok(data)
+        return ok(data)
     except Exception as e:
-        return Err(str(e))
+        return err(str(e))
 
 
 def build_ml_env() -> dict:

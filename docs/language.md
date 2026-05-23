@@ -149,12 +149,17 @@ load("data.csv")
   |> print()
 ```
 
-Import external files or stdlib namespaces with `use`:
+Import stdlib libs or external files with `use`:
 
 ```
 use ml
-use "./transforms" as t
+use math
+use viz
+use "./transforms.pep" as t
+use "./my_utils.py" as u     # plain Python file
 ```
+
+Python files are loaded via the bridge — functions receive and return plain Python types, conversion is automatic.
 
 ---
 
@@ -184,17 +189,49 @@ use "./transforms" as t
 
 ## Standard library
 
+### Core — always available
+
 | Function | Description |
 |---|---|
-| `load(path)` | Load CSV as list of rows |
-| `filter(pred)` | Keep rows matching condition |
-| `map(expr)` | Transform every row |
+| `load(path)` | Load CSV or JSON as list of rows |
+| `filter(pred)` | Keep elements matching condition — any list |
+| `map(expr)` | Transform every element — any list |
+| `reduce(init, fn)` | Fold list into a single value |
 | `add(field: expr)` | Add a new field to every row |
 | `drop(field)` | Remove a field |
+| `select(fields...)` | Keep only specified fields |
+| `rename(old: new)` | Rename a field |
 | `sort(by, dir)` | Sort rows |
+| `join(other, on)` | Join two lists on a key |
+| `group(by) { }` | Group by field, run sub-pipe per group |
 | `print(value)` | Print and pass through |
+
+### `use math`
+
+| Function | Description |
+|---|---|
 | `math.log(x)` | Natural log |
 | `math.mean(list)` | Mean |
 | `math.std(list)` | Standard deviation |
 | `math.sqrt(x)` | Square root |
 | `math.round(x)` | Round |
+
+### `use ml`
+
+| Function | Description |
+|---|---|
+| `ml.kmeans(k)` | K-means clustering — adds `cluster` field |
+| `ml.umap(dims)` | Dimensionality reduction — adds `umap1`, `umap2`, ... |
+| `ml.ols(target)` | Linear regression — adds `predicted` field |
+| `ml.embed(col)` | Text embedding — adds `embedding` field |
+| `ml.silhouette()` | Score current clustering |
+
+### `use viz`
+
+| Function | Description |
+|---|---|
+| `viz.scatter(x, y, color?)` | Scatter plot |
+| `viz.histogram(col)` | Histogram |
+| `viz.heatmap()` | Correlation heatmap |
+| `viz.plot()` | Auto-plot based on data shape |
+| `viz.grid(...)` | Multiple plots side by side |
