@@ -304,20 +304,20 @@ class Interpreter:
     def _print_step(self, call_node, before: ListValue | None, after: ListValue):
         import sys
         name = self._call_name(call_node)
-        desc = f"|> {name}"
+        desc = f"\033[2m|>\033[0m \033[36m{name}\033[0m"
+        desc_plain = f"|> {name}"
         rows = len(after.rows)
         cols = len(after.schema)
-        if cols > 0:
-            line = f"{desc:<30} → List  {rows} rows × {cols} cols"
-        else:
-            line = f"{desc:<30} → List  {rows} items"
+        pad = max(0, 34 - len(desc_plain))
+        shape = f"\033[2mList\033[0m  \033[1m{rows}\033[0m rows × \033[1m{cols}\033[0m cols" if cols > 0 else f"\033[2mList\033[0m  \033[1m{rows}\033[0m items"
+        line = f"{desc}{' ' * pad}\033[2m→\033[0m {shape}"
         if before is not None:
             dropped = len(before.rows) - rows
             added_cols = set(after.schema) - set(before.schema)
             if dropped > 0:
-                line += f"  ({dropped} dropped)"
+                line += f"  \033[31m({dropped} dropped)\033[0m"
             if added_cols:
-                line += f"  (+{', '.join(added_cols)})"
+                line += f"  \033[32m(+{', '.join(added_cols)})\033[0m"
         print(line, file=sys.stderr)
 
     def _call_name(self, node) -> str:

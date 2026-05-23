@@ -11,8 +11,8 @@ pip install -e .
 ## Run
 
 ```sh
-pep run file.pep  # run a file
-pep repl          # interactive REPL
+pep file.pep  # run a file
+pep           # interactive REPL
 ```
 
 ## Example

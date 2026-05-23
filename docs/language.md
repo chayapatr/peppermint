@@ -1,6 +1,6 @@
 # Peppermint
 
-A pipe-first language for data work. Run files with `pep run file.pep`.
+A pipe-first language for data work. Run files with `pep file.pep`, or just `pep` for the REPL.
 
 ---
 

@@ -4,42 +4,53 @@ sys.setrecursionlimit(50000)
 from .parser import parse, ParseError
 from .interpreter import Interpreter, Err, Ok, PepError
 from .stdlib import build_global_env
+from .diagnostics import report_parse_error, report_pep_error, report_err
+from .interpreter import ListValue, PmFunction, PmRange
 
 
-def _render_error(kind: str, msg: str, src: str | None, line: int, col: int, span: int, filename: str):
-    lines = src.splitlines() if src else []
-    line_str = str(line)
-    pad = len(line_str)
+def _repl_display(value):
+    if value is None:
+        return
+    if isinstance(value, bool):
+        val_str = "true" if value else "false"
+        type_str = "bool"
+    elif isinstance(value, int):
+        val_str = str(value)
+        type_str = "num"
+    elif isinstance(value, float):
+        val_str = str(value)
+        type_str = "num"
+    elif isinstance(value, str):
+        val_str = repr(value)
+        type_str = "str"
+    elif isinstance(value, ListValue):
+        val_str = repr(value)
+        type_str = ""
+    elif isinstance(value, PmFunction):
+        val_str = repr(value)
+        type_str = "fn"
+    elif isinstance(value, PmRange):
+        val_str = f"{value.start}..{value.end}"
+        type_str = "range"
+    elif isinstance(value, dict):
+        pairs = ", ".join(f"{k}: {v!r}" for k, v in value.items())
+        val_str = "{ " + pairs + " }"
+        type_str = "obj"
+    elif isinstance(value, list):
+        val_str = repr(value)
+        type_str = "list"
+    else:
+        val_str = str(value)
+        type_str = type(value).__name__
 
-    # Source line format: " {line_str} │ {content}"
-    # │ sits at column index pad+2 (0-based): 1 space + line_str + 1 space
-    # All gutter lines put their box char at the same column index.
-    g = " " * (pad + 2)  # spaces before │ / · / ╭ / ╰
-    print(f"\033[1;31mError:\033[0m × {msg}", file=sys.stderr)
-    print(f"{g}\033[2m╭─[\033[0m{filename}:{line}:{col}\033[2m]\033[0m", file=sys.stderr)
-
-    # If line is past the file (e.g. unexpected EOF), show last line and point to end
-    show_line = line if 0 < line <= len(lines) else len(lines)
-    if show_line > 0 and lines:
-        source_line = lines[show_line - 1]
-        show_str = str(show_line)
-        print(f" {show_str} \033[2m│\033[0m {source_line}", file=sys.stderr)
-
-        col0 = (col - 1) if line <= len(lines) else len(source_line)
-        col0 = max(0, min(col0, len(source_line)))
-        left_pad = " " * col0
-        span = max(span, 1)
-        mid = span // 2
-
-        if span == 1:
-            print(f"{g}\033[2m·\033[0m {left_pad}\033[1;33m^\033[0m", file=sys.stderr)
-            print(f"{g}\033[2m·\033[0m {left_pad}\033[2m╰──\033[0m {kind}", file=sys.stderr)
-        else:
-            bar = "─" * mid + "┬" + "─" * (span - mid - 1)
-            print(f"{g}\033[2m·\033[0m {left_pad}\033[1;33m{bar}\033[0m", file=sys.stderr)
-            print(f"{g}\033[2m·\033[0m {left_pad}{' ' * mid}\033[2m╰──\033[0m {kind}", file=sys.stderr)
-
-    print(f"{g}\033[2m╰────\033[0m", file=sys.stderr)
+    prefix = "\033[32m<<<\033[0m"
+    # "<<< " is 4 chars; pad so arrow aligns at col 34 (matching pipe step)
+    if type_str:
+        pad = max(0, 34 - 4 - len(val_str))
+        tag = f"\033[33m← {type_str}\033[0m"
+        print(f"{prefix} {val_str}{' ' * pad}\033[33m←\033[0m \033[33m{type_str}\033[0m")
+    else:
+        print(f"{prefix} {val_str}")
 
 
 def run_file(args):
@@ -52,7 +63,7 @@ def run_file(args):
     try:
         program = parse(src)
     except ParseError as e:
-        _render_error("parse error", str(e.args[0]).split(": ", 1)[-1], src, e.line, e.col, 1, args.file)
+        report_parse_error(e, src, args.file)
         sys.exit(1)
     except Exception as e:
         print(f"\033[1;31mError:\033[0m × {e}", file=sys.stderr)
@@ -64,22 +75,14 @@ def run_file(args):
     try:
         result = interp.run(program)
     except PepError as e:
-        loc = e.loc
-        if loc and loc.line:
-            _render_error(str(e), str(e), src, loc.line, loc.col, e.span, args.file)
-        else:
-            print(f"\033[1;31mError:\033[0m × {e}", file=sys.stderr)
+        report_pep_error(e, src, args.file)
         sys.exit(1)
     except Exception as e:
         print(f"\033[1;31mError:\033[0m × {e}", file=sys.stderr)
         sys.exit(1)
 
     if isinstance(result, Err):
-        cause = result.cause
-        if cause and cause.loc and cause.loc.line:
-            _render_error(str(cause), result.msg, src, cause.loc.line, cause.loc.col, cause.span, args.file)
-        else:
-            print(f"\033[1;31mError:\033[0m × {result.msg}", file=sys.stderr)
+        report_err(result, src, args.file)
         sys.exit(1)
 
 
@@ -93,7 +96,7 @@ def run_repl(args):
     buf = []
 
     while True:
-        prompt = "... " if buf else ">>> "
+        prompt = "\033[2m...\033[0m " if buf else "\033[32m>>>\033[0m "
         try:
             line = input(prompt)
         except EOFError:
@@ -104,16 +107,19 @@ def run_repl(args):
             buf = []
             continue
 
-        # Continuation: lines ending with |> or inside open brackets
         stripped = line.rstrip()
         buf.append(line)
 
-        # Try to parse what we have — if it fails, wait for more input
-        src = "\n".join(buf)
-        try:
-            program = parse(src)
-        except Exception:
-            # Check if user left input empty (just pressed enter on empty buf)
+        # Try joining with newlines first, then with spaces (handles `1 +\n2` style)
+        program = None
+        for src in ("\n".join(buf), " ".join(buf)):
+            try:
+                program = parse(src)
+                break
+            except Exception:
+                pass
+
+        if program is None:
             if stripped == "" and len(buf) == 1:
                 buf = []
             continue
@@ -122,39 +128,34 @@ def run_repl(args):
 
         try:
             result = interp.run(program)
+        except PepError as e:
+            report_pep_error(e, src, "<repl>")  # src is still in scope from the loop above
+            continue
         except Exception as e:
-            print(f"error: {e}")
+            print(f"\033[1;31mError:\033[0m × {e}", file=sys.stderr)
             continue
 
         if result is None:
             continue
         if isinstance(result, Err):
-            print(f"<<< Err: {result.msg}")
+            report_err(result, src, "<repl>")
         elif isinstance(result, Ok):
-            if result.value is not None:
-                print(f"<<< {result.value}")
+            _repl_display(result.value)
         else:
-            print(f"<<< {result}")
+            _repl_display(result)
 
 
 def main():
     ap = argparse.ArgumentParser(prog="pep", description="Peppermint language")
-    sub = ap.add_subparsers(dest="command")
-
-    run_p = sub.add_parser("run", help="Run a .pep file")
-    run_p.add_argument("file", help="Path to .pep file")
-    run_p.add_argument("--quiet", action="store_true", help="Suppress pipe step summaries")
-
-    sub.add_parser("repl", help="Start interactive REPL")
+    ap.add_argument("file", nargs="?", help="Path to .pep file (omit to start REPL)")
+    ap.add_argument("--quiet", action="store_true", help="Suppress pipe step summaries")
 
     args = ap.parse_args()
 
-    if args.command == "run":
+    if args.file:
         run_file(args)
-    elif args.command == "repl":
-        run_repl(args)
     else:
-        ap.print_help()
+        run_repl(args)
 
 
 if __name__ == "__main__":
