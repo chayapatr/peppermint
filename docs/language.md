@@ -69,7 +69,15 @@ match(it.income,
 )
 ```
 
-Patterns: `>`, `<`, `>=`, `<=`, `==`, `!=`, `_` (wildcard).
+Patterns: `>`, `<`, `>=`, `<=`, `==`, `!=`, `_` (wildcard). Bare literals match by equality — `7` is shorthand for `== 7`, `true` for `== true`, `"x"` for `== "x"`:
+
+```
+match(n,
+  0: "zero",
+  1: "one",
+  _: "many"
+)
+```
 
 Use inside a pipe step:
 
@@ -97,11 +105,11 @@ Parentheses let the body span multiple lines. Assignments inside `( )` are local
 
 ```
 next_cell = (grid, x, y) -> (
-  cell = get(grid, x, y)
+  cell = grid[y * w + x]
   n    = neighbors(grid, x, y)
   match(cell,
-    == 1: match(n, == 2: 1, == 3: 1, _: 0),
-    _:    match(n, == 3: 1, _: 0)
+    1: match(n, 2: 1, 3: 1, _: 0),
+    _: match(n, 3: 1, _: 0)
   )
 )
 ```
@@ -115,7 +123,7 @@ f = x -> (print(x); f(x - 1))
 Functions can call themselves recursively:
 
 ```
-fact = n -> match(n, == 0: 1, _: n * fact(n - 1))
+fact = n -> match(n, 0: 1, _: n * fact(n - 1))
 ```
 
 Call them like any built-in:

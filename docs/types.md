@@ -88,7 +88,7 @@ Patterns:
 
 ```
 > n   < n   >= n   <= n   == n   != n    -- comparison (Scalar)
-== true   == false                       -- boolean match
+7   "x"   true   false                  -- bare literal, shorthand for == value
 Ok(x)   Err(x)                           -- Result destructure
 _                                        -- wildcard, always matches
 ```
@@ -122,7 +122,7 @@ Can be called as `add(1, 2)`. Stdlib functions also accept keyword args: `sort(b
 Functions can reference themselves. The binding is updated after assignment so the closure sees the function's own name:
 
 ```
-fact = n -> match(n, == 0: 1, _: n * fact(n - 1))
+fact = n -> match(n, 0: 1, _: n * fact(n - 1))
 ```
 
 ### Local bindings
@@ -131,7 +131,7 @@ Inside `( )`, assignments are local — they don't leak into the outer scope. Th
 
 ```
 next_cell = (grid, x, y) -> (
-  cell = get(grid, x, y)   -- local to this block
+  cell = grid[y * w + x]   -- local to this block
   n    = neighbors(grid, x, y)
   match(cell, ...)
 )
