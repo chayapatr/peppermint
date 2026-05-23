@@ -11,25 +11,35 @@ pip install -e .
 ## Run
 
 ```sh
-pep run file.pep
+pep run file.pep  # run a file
+pep repl          # interactive REPL
 ```
 
 ## Example
 
 ```
-load("data.csv")
+load("survey.csv")
   |> filter(it.age > 18)
   |> add(score: it.income / it.age)
   |> sort(by: "score", dir: "desc")
   |> print()
 ```
 
+```
+load("survey.csv")
+  |> group(by: "region") {
+      |> agg(avg_score: mean(it.score), n: count())
+  }
+  |> sort(by: "avg_score", dir: "desc")
+  |> print()
+```
+
 Each step prints a summary as it runs:
 
 ```
-|> filter    → List  843 rows × 8 cols  (157 dropped)
-|> add       → List  843 rows × 9 cols  (+score)
-|> sort      → List  843 rows × 9 cols
+|> filter    → List  843 rows × 5 cols  (157 dropped)
+|> add       → List  843 rows × 6 cols  (+score)
+|> sort      → List  843 rows × 6 cols
 ```
 
 See [docs/language.md](docs/language.md) for the full language reference and [examples/](examples/) for more.
