@@ -39,7 +39,16 @@ glider = [
 
 
 f = x -> (
-  print(render(run(glider, x)));
-  match(x, < 500: f(x+1), _: 0))
+
+  print(
+    render(
+      run(
+        glider,
+        x)));
+        print(x);
+  match(x,
+    < 20:
+    f(x+1), _: 0)
+  )
 
 f(0)

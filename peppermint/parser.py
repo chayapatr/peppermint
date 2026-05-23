@@ -1,420 +1,635 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from pathlib import Path
-from lark import Lark, Transformer, Token, Tree
 from .ast_nodes import *
 
 
-@dataclass
-class _ContPipe:
-    """Internal: a continuation pipe block starting with |>, merged in program()."""
-    steps: list
+# ---------------------------------------------------------------------------
+# Lexer
+# ---------------------------------------------------------------------------
 
-_GRAMMAR = (Path(__file__).parent / "grammar.lark").read_text()
-_parser = Lark(_GRAMMAR, parser="lalr", start="program", propagate_positions=True)
+import re
 
-import re as _re
-_NL_PIPE = _re.compile(r'[\n;]+([ \t]*)\|>')
+_TOKEN_RE = re.compile(r"""
+    (?P<RANGE>    \d+\.\.\d+                              )  |
+    (?P<FLOAT>    -?(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?   )  |
+    (?P<INT>      \d+                                     )  |
+    (?P<STRING>   "(?:[^"\\]|\\.)*"                       )  |
+    (?P<ARROW>    ->                                      )  |
+    (?P<PIPE>     \|>                                     )  |
+    (?P<GTE>      >=                                      )  |
+    (?P<LTE>      <=                                      )  |
+    (?P<EQ>       ==                                      )  |
+    (?P<NEQ>      !=                                      )  |
+    (?P<GT>       >                                       )  |
+    (?P<LT>       <                                       )  |
+    (?P<SPREAD>   \.\.\.                                  )  |
+    (?P<DOT>      \.                                      )  |
+    (?P<PLUS>     \+                                      )  |
+    (?P<MINUS>    -                                       )  |
+    (?P<STAR>     \*                                      )  |
+    (?P<SLASH>    /                                       )  |
+    (?P<MOD>      %                                       )  |
+    (?P<LPAREN>   \(                                      )  |
+    (?P<RPAREN>   \)                                      )  |
+    (?P<LBRACKET> \[                                      )  |
+    (?P<RBRACKET> \]                                      )  |
+    (?P<LBRACE>   \{                                      )  |
+    (?P<RBRACE>   \}                                      )  |
+    (?P<COMMA>    ,                                       )  |
+    (?P<COLON>    :                                       )  |
+    (?P<EQUALS>   =                                       )  |
+    (?P<NL>       [\n;]+                                  )  |
+    (?P<NAME>     [a-zA-Z_][a-zA-Z0-9_]*                 )  |
+    (?P<WS>       [ \t]+                                  )  |
+    (?P<COMMENT>  \#[^\n]*                                )
+""", re.VERBOSE)
 
-def _normalize(src: str) -> str:
-    """Remove newlines immediately before |> so cont-pipe works in paren bodies."""
-    return _NL_PIPE.sub(r' \1|>', src)
+_KEYWORDS = {"true", "false", "none", "ns", "use", "as", "quiet", "match"}
 
 
-def parse(src: str) -> Program:
-    src = _normalize(src)
-    if not src.endswith("\n"):
-        src += "\n"
-    tree = _parser.parse(src)
-    return PeppermintTransformer().transform(tree)
+class Token:
+    __slots__ = ("type", "value", "line", "col")
+
+    def __init__(self, type_: str, value: str, line: int, col: int):
+        self.type = type_
+        self.value = value
+        self.line = line
+        self.col = col
+
+    def __repr__(self):
+        return f"Token({self.type}, {self.value!r}, {self.line}:{self.col})"
 
 
-def _loc(tree) -> Loc:
-    if hasattr(tree, "meta") and tree.meta.line is not None:
-        return Loc(tree.meta.line, tree.meta.column)
-    return NO_LOC
+def tokenize(src: str) -> list[Token]:
+    tokens: list[Token] = []
+    line = 1
+    line_start = 0
+    for m in _TOKEN_RE.finditer(src):
+        kind = m.lastgroup
+        value = m.group()
+        col = m.start() - line_start + 1
+        if kind in ("WS", "COMMENT"):
+            if "\n" in value:
+                count = value.count("\n")
+                line += count
+                line_start = m.start() + value.rfind("\n") + 1
+            continue
+        if kind == "NL":
+            count = value.count("\n")
+            nl_line = line
+            tokens.append(Token("NL", value, nl_line, col))
+            if count:
+                line += count
+                line_start = m.start() + value.rfind("\n") + 1
+            continue
+        if kind == "NAME" and value in _KEYWORDS:
+            tokens.append(Token(value.upper(), value, line, col))
+        else:
+            tokens.append(Token(kind, value, line, col))
+    tokens.append(Token("EOF", "", line, len(src) - line_start + 1))
+    return tokens
 
 
-def _tok_loc(tok: Token) -> Loc:
-    return Loc(tok.line or 0, tok.column or 0)
+# ---------------------------------------------------------------------------
+# Parser
+# ---------------------------------------------------------------------------
+
+class ParseError(Exception):
+    def __init__(self, msg: str, line: int = 0, col: int = 0):
+        super().__init__(f"Parse error at {line}:{col}: {msg}")
+        self.line = line
+        self.col = col
 
 
-class PeppermintTransformer(Transformer):
+class Parser:
+    def __init__(self, tokens: list[Token]):
+        self._tokens = tokens
+        self._pos = 0
 
-    # --- Program ---
+    # --- Token stream helpers ---
 
-    def _coalesce(self, stmts):
-        """Merge Ident/FieldAccess/Call followed by TupleLit into a Call node."""
-        coalesced = []
-        for node in stmts:
-            if coalesced and isinstance(node, TupleLit):
-                if self._try_merge_tuple(coalesced, node):
-                    continue
-            coalesced.append(node)
-        return coalesced
+    def _peek(self) -> Token:
+        return self._tokens[self._pos]
 
-    def _try_merge_tuple(self, coalesced, tup) -> bool:
-        """Try to merge a TupleLit into the tail-callable of the previous node. Returns True if merged."""
-        prev = coalesced[-1]
+    def _peek2(self) -> Token:
+        i = self._pos + 1
+        while i < len(self._tokens) and self._tokens[i].type == "NL":
+            i += 1
+        return self._tokens[i]
 
-        # Direct callable: f (a, b)
-        if self._is_callable(prev):
-            coalesced.pop()
-            coalesced.append(Call(func=prev, args=tup.items, kwargs={}, block=None))
-            return True
+    def _at(self, *types: str) -> bool:
+        return self._peek().type in types
 
-        # Assign whose value tail is callable
-        if isinstance(prev, Assign):
-            if self._merge_into(prev, 'value', tup):
-                return True
+    def _at_after_nl(self, *types: str) -> bool:
+        """Check if the next non-NL token is one of types."""
+        i = self._pos
+        while i < len(self._tokens) and self._tokens[i].type == "NL":
+            i += 1
+        return self._tokens[i].type in types
 
-        # BinOp whose right tail is callable (e.g. a + b + f (x, y))
-        if isinstance(prev, BinOp):
-            if self._merge_into(prev, 'right', tup):
-                return True
+    def _eat(self, *types: str) -> Token:
+        tok = self._peek()
+        if tok.type not in types:
+            raise ParseError(
+                f"expected {' or '.join(types)}, got {tok.type} ({tok.value!r})",
+                tok.line, tok.col,
+            )
+        self._pos += 1
+        return tok
 
-        return False
+    def _skip_nl(self):
+        while self._at("NL"):
+            self._pos += 1
 
-    def _merge_into(self, node, attr, tup) -> bool:
-        """Recursively find and merge TupleLit into the rightmost callable in node.attr."""
-        val = getattr(node, attr)
-        if self._is_callable(val):
-            setattr(node, attr, Call(func=val, args=tup.items, kwargs={}, block=None))
-            return True
-        if isinstance(val, Lambda):
-            if self._merge_into(val, 'body', tup):
-                return True
-        if isinstance(val, BinOp):
-            if self._merge_into(val, 'right', tup):
-                return True
-        return False
+    def _loc(self, tok: Token) -> Loc:
+        return Loc(tok.line, tok.col)
 
-    def program(self, items):
-        stmts = [i for i in items if i is not None]
-        stmts = self._coalesce(stmts)
+    # --- Top level ---
 
-        # Pass 2: merge cont_pipe nodes onto the previous statement
-        merged = []
-        for node in stmts:
-            if isinstance(node, _ContPipe):
-                if merged:
-                    prev = merged[-1]
-                    if isinstance(prev, Pipe):
-                        prev.steps.extend(node.steps)
-                    elif isinstance(prev, Assign):
-                        if isinstance(prev.value, Pipe):
-                            prev.value.steps.extend(node.steps)
-                        else:
-                            prev.value = Pipe(steps=[prev.value] + node.steps)
-                    else:
-                        merged[-1] = Pipe(steps=[prev] + node.steps)
-            else:
-                merged.append(node)
-        return Program(body=merged)
-
-    def _is_callable(self, node) -> bool:
-        return isinstance(node, (Ident, FieldAccess, Call))
-
-    def statement(self, items):
-        return items[0]
-
-    def cont_pipe(self, items):
-        steps = [i for i in items if isinstance(i, PipeStep)]
-        return _ContPipe(steps=steps)
-
-    def paren_pipe(self, items):
-        source = items[0]
-        extra = [i for i in items[1:] if isinstance(i, PipeStep)]
-        if not extra:
-            return source
-        if isinstance(source, Pipe):
-            source.steps.extend(extra)
-            return source
-        return Pipe(steps=[source] + extra)
-
-    def paren_seq(self, items):
-        items = self._coalesce(items)
-        if len(items) == 1:
-            return items[0]
-        return Block(stmts=items)
-
-    def seq_expr(self, items):
-        items = self._coalesce(items)
-        if len(items) == 1:
-            return items[0]
-        return Block(stmts=items)
-
-    def params(self, items):
-        return [str(t) for t in items if isinstance(t, Token) and t.type == "NAME"]
-
-    def paren_more(self, items):
-        return items  # pass children up; paren_body flattens them
-
-    def paren_body(self, items):
+    def parse_program(self) -> Program:
         stmts = []
-        for item in items:
-            if item is None:
+        self._skip_nl()
+        while not self._at("EOF"):
+            stmt = self._parse_statement()
+            if stmt is not None:
+                # cont_pipe: a statement starting with |> merges onto previous
+                if isinstance(stmt, _ContPipe):
+                    if stmts:
+                        prev = stmts[-1]
+                        if isinstance(prev, Pipe):
+                            prev.steps.extend(stmt.steps)
+                        elif isinstance(prev, Assign):
+                            if isinstance(prev.value, Pipe):
+                                prev.value.steps.extend(stmt.steps)
+                            else:
+                                prev.value = Pipe(steps=[prev.value] + stmt.steps)
+                        else:
+                            stmts[-1] = Pipe(steps=[prev] + stmt.steps)
+                else:
+                    stmts.append(stmt)
+            self._skip_nl()
+        return Program(body=stmts)
+
+    def _parse_statement(self):
+        # Continuation pipe: |> at statement level
+        if self._at("PIPE"):
+            steps = []
+            while self._at("PIPE"):
+                self._eat("PIPE")
+                steps.append(self._parse_pipe_step())
+                self._skip_nl()  # allow newlines between cont-pipe steps? No -- eat only if next is also |>
+            return _ContPipe(steps=steps)
+
+        tok = self._peek()
+
+        if tok.type == "USE":
+            return self._parse_use()
+        if tok.type == "NS":
+            return self._parse_ns()
+
+        # assign: NAME = expr  (only if followed by EQUALS, not ARROW)
+        if tok.type == "NAME" and self._peek2().type == "EQUALS":
+            return self._parse_assign()
+
+        return self._parse_expr()
+
+    # --- Statements ---
+
+    def _parse_use(self) -> UseDecl:
+        tok = self._eat("USE")
+        loc = self._loc(tok)
+        path_tok = self._eat("NAME", "STRING")
+        path = path_tok.value.strip('"')
+        alias = None
+        if self._at("AS"):
+            self._eat("AS")
+            alias = self._eat("NAME").value
+        return UseDecl(path=path, alias=alias, loc=loc)
+
+    def _parse_ns(self) -> NsDecl:
+        tok = self._eat("NS")
+        loc = self._loc(tok)
+        name = self._eat("NAME").value
+        self._eat("LBRACE")
+        self._skip_nl()
+        body = []
+        while not self._at("RBRACE", "EOF"):
+            if self._at("NL"):
+                self._skip_nl()
                 continue
-            if isinstance(item, list):
-                stmts.extend(i for i in item if i is not None)
+            name_tok = self._peek()
+            if name_tok.type == "NAME" and self._peek2().type == "EQUALS":
+                body.append(self._parse_assign())
             else:
-                stmts.append(item)
+                raise ParseError("expected assignment inside ns", name_tok.line, name_tok.col)
+            self._skip_nl()
+        self._eat("RBRACE")
+        return NsDecl(name=name, body=body, loc=loc)
+
+    def _parse_assign(self) -> Assign:
+        name_tok = self._eat("NAME")
+        self._eat("EQUALS")
+        value = self._parse_expr()
+        return Assign(name=name_tok.value, value=value, loc=self._loc(name_tok))
+
+    # --- Expressions (precedence climbing) ---
+
+    def _parse_expr(self):
+        return self._parse_lambda()
+
+    def _parse_lambda(self):
+        # () -> expr  or  () -> (body)
+        if self._at("LPAREN"):
+            saved = self._pos
+            try:
+                result = self._try_parse_lambda_paren()
+                if result is not None:
+                    return result
+            except ParseError:
+                pass
+            self._pos = saved
+
+        # NAME -> expr  or  NAME -> (body)
+        if self._at("NAME") and self._peek2().type == "ARROW":
+            name_tok = self._eat("NAME")
+            self._eat("ARROW")
+            body = self._parse_lambda_body()
+            return Lambda(params=[name_tok.value], body=body, loc=self._loc(name_tok))
+
+        return self._parse_pipe()
+
+    def _try_parse_lambda_paren(self):
+        """Try to parse `(params) -> body` or `() -> body`. Returns None if not a lambda."""
+        tok = self._eat("LPAREN")
+        loc = self._loc(tok)
+        self._skip_nl()
+
+        if self._at("RPAREN"):
+            # () -> ...
+            self._eat("RPAREN")
+            if not self._at("ARROW"):
+                return None
+            self._eat("ARROW")
+            body = self._parse_lambda_body()
+            return Lambda(params=[], body=body, loc=loc)
+
+        # Try to collect NAME, NAME, ... then RPAREN ARROW
+        if not self._at("NAME"):
+            return None
+        params = [self._eat("NAME").value]
+        self._skip_nl()
+        while self._at("COMMA"):
+            self._eat("COMMA")
+            self._skip_nl()
+            params.append(self._eat("NAME").value)
+            self._skip_nl()
+        self._eat("RPAREN")
+        if not self._at("ARROW"):
+            return None
+        self._eat("ARROW")
+        body = self._parse_lambda_body()
+        return Lambda(params=params, body=body, loc=loc)
+
+    def _parse_lambda_body(self):
+        return self._parse_pipe()
+
+    def _parse_paren_item(self):
+        """An item inside paren_body: a full expr (including lambda) optionally followed by |> steps."""
+        node = self._parse_expr()
+        # Allow inline pipe continuations after the expr (when not already consumed by pipe_or_cmp)
+        while self._at("PIPE"):
+            self._eat("PIPE")
+            step = self._parse_pipe_step()
+            if isinstance(node, Pipe):
+                node.steps.append(step)
+            else:
+                node = Pipe(steps=[node, step])
+        return node
+
+    def _parse_pipe(self):
+        node = self._parse_pipe_or_cmp()
+        return node
+
+    def _parse_pipe_or_cmp(self):
+        node = self._parse_cmp()
+        while self._at("PIPE"):
+            self._eat("PIPE")
+            step = self._parse_pipe_step()
+            if isinstance(node, Pipe):
+                node.steps.append(step)
+            else:
+                node = Pipe(steps=[node, step])
+        return node
+
+    def _parse_pipe_step(self) -> PipeStep:
+        expr = self._parse_postfix()
+        quiet = False
+        if self._at("QUIET"):
+            self._eat("QUIET")
+            quiet = True
+        return PipeStep(expr=expr, quiet=quiet)
+
+    _CMP_OPS = {"GT", "LT", "GTE", "LTE", "EQ", "NEQ"}
+    _CMP_STR = {"GT": ">", "LT": "<", "GTE": ">=", "LTE": "<=", "EQ": "==", "NEQ": "!="}
+
+    def _parse_cmp(self):
+        node = self._parse_add()
+        while self._at(*self._CMP_OPS):
+            op_tok = self._eat(*self._CMP_OPS)
+            right = self._parse_add()
+            node = BinOp(op=self._CMP_STR[op_tok.type], left=node, right=right)
+        return node
+
+    def _parse_add(self):
+        node = self._parse_mul()
+        while self._at("PLUS", "MINUS"):
+            op_tok = self._eat("PLUS", "MINUS")
+            right = self._parse_mul()
+            node = BinOp(op=op_tok.value, left=node, right=right)
+        return node
+
+    def _parse_mul(self):
+        node = self._parse_unary()
+        while self._at("STAR", "SLASH", "MOD"):
+            op_tok = self._eat("STAR", "SLASH", "MOD")
+            right = self._parse_unary()
+            node = BinOp(op=op_tok.value, left=node, right=right)
+        return node
+
+    def _parse_unary(self):
+        if self._at("MINUS"):
+            tok = self._eat("MINUS")
+            # Avoid consuming a negative number literal (already handled in atom)
+            operand = self._parse_postfix()
+            return Neg(operand=operand, loc=self._loc(tok))
+        return self._parse_postfix()
+
+    def _parse_postfix(self):
+        node = self._parse_atom()
+        while True:
+            if self._at("DOT"):
+                self._eat("DOT")
+                field_tok = self._eat("NAME")
+                node = FieldAccess(obj=node, field=field_tok.value)
+            elif self._at("LPAREN"):
+                self._eat("LPAREN")
+                self._skip_nl()
+                args, kwargs = [], {}
+                if not self._at("RPAREN"):
+                    args, kwargs = self._parse_arglist()
+                self._eat("RPAREN")
+                block = None
+                if self._at("LBRACE"):
+                    block = self._parse_block()
+                node = Call(func=node, args=args, kwargs=kwargs, block=block)
+            else:
+                break
+        return node
+
+    def _parse_arglist(self):
+        args, kwargs = [], {}
+        self._skip_nl()
+        while not self._at("RPAREN", "EOF"):
+            # kwarg: NAME COLON expr
+            if self._at("NAME") and self._peek2().type == "COLON":
+                key_tok = self._eat("NAME")
+                self._eat("COLON")
+                self._skip_nl()
+                val = self._parse_expr()
+                kwargs[key_tok.value] = val
+            else:
+                args.append(self._parse_expr())
+            self._skip_nl()
+            if self._at("COMMA"):
+                self._eat("COMMA")
+                self._skip_nl()
+            else:
+                break
+        return args, kwargs
+
+    def _parse_block(self) -> list:
+        """{ |> step ... } sub-pipe block for group."""
+        self._eat("LBRACE")
+        self._skip_nl()
+        steps = []
+        while not self._at("RBRACE", "EOF"):
+            self._eat("PIPE")
+            steps.append(self._parse_pipe_step())
+            self._skip_nl()
+        self._eat("RBRACE")
+        return steps
+
+    def _parse_atom(self):
+        tok = self._peek()
+
+        if tok.type == "INT":
+            self._eat("INT")
+            return IntLit(value=int(tok.value), loc=self._loc(tok))
+
+        if tok.type == "FLOAT":
+            self._eat("FLOAT")
+            return FloatLit(value=float(tok.value), loc=self._loc(tok))
+
+        if tok.type == "RANGE":
+            self._eat("RANGE")
+            start, end = tok.value.split("..")
+            return Range(start=int(start), end=int(end), loc=self._loc(tok))
+
+        if tok.type == "STRING":
+            self._eat("STRING")
+            raw = tok.value[1:-1]
+            value = raw.encode("raw_unicode_escape").decode("unicode_escape")
+            return StrLit(value=value, loc=self._loc(tok))
+
+        if tok.type == "TRUE":
+            self._eat("TRUE")
+            return BoolLit(value=True, loc=self._loc(tok))
+
+        if tok.type == "FALSE":
+            self._eat("FALSE")
+            return BoolLit(value=False, loc=self._loc(tok))
+
+        if tok.type == "NONE":
+            self._eat("NONE")
+            return NoneLit(loc=self._loc(tok))
+
+        if tok.type == "MATCH":
+            return self._parse_match()
+
+        if tok.type == "SPREAD":
+            self._eat("SPREAD")
+            obj = self._parse_postfix()
+            return Spread(obj=obj, loc=self._loc(tok))
+
+        if tok.type == "LBRACKET":
+            return self._parse_list()
+
+        if tok.type == "LBRACE":
+            return self._parse_obj()
+
+        if tok.type == "LPAREN":
+            return self._parse_paren_expr()
+
+        if tok.type == "NAME":
+            self._eat("NAME")
+            return Ident(name=tok.value, loc=self._loc(tok))
+
+        raise ParseError(f"unexpected token {tok.type} ({tok.value!r})", tok.line, tok.col)
+
+    def _parse_paren_expr(self):
+        """( expr ) or ( stmt; stmt; ... ) block."""
+        tok = self._eat("LPAREN")
+        self._skip_nl()
+
+        if self._at("RPAREN"):
+            raise ParseError("empty parentheses in expression context", tok.line, tok.col)
+
+        stmts = []
+        while not self._at("RPAREN", "EOF"):
+            if self._at("PIPE") and stmts:
+                prev = stmts[-1]
+                while self._at("PIPE"):
+                    self._eat("PIPE")
+                    step = self._parse_pipe_step()
+                    if isinstance(prev, Pipe):
+                        prev.steps.append(step)
+                    else:
+                        prev = Pipe(steps=[prev, step])
+                stmts[-1] = prev
+            else:
+                stmts.append(self._parse_paren_item())
+            if self._at("NL"):
+                self._skip_nl()
+            else:
+                break
+        self._eat("RPAREN")
         if len(stmts) == 1:
             return stmts[0]
         return Block(stmts=stmts)
 
-    def paren_item(self, items):
-        # items: expr followed by optional pipe steps
-        source = items[0]
-        extra = [i for i in items[1:] if isinstance(i, PipeStep)]
-        if not extra:
-            return source
-        if isinstance(source, Pipe):
-            source.steps.extend(extra)
-            return source
-        return Pipe(steps=[source] + extra)
-
-    # --- Statements ---
-
-    def assign(self, items):
-        name_tok = items[0]
-        value = items[1]
-        extra_steps = [i for i in items[2:] if isinstance(i, PipeStep)]
-        if extra_steps:
-            if isinstance(value, Pipe):
-                value.steps.extend(extra_steps)
+    def _parse_list(self) -> ListLit:
+        tok = self._eat("LBRACKET")
+        self._skip_nl()
+        items = []
+        while not self._at("RBRACKET", "EOF"):
+            items.append(self._parse_expr())
+            self._skip_nl()
+            if self._at("COMMA"):
+                self._eat("COMMA")
+                self._skip_nl()
             else:
-                value = Pipe(steps=[value] + extra_steps)
-        return Assign(name=str(name_tok), value=value, loc=_tok_loc(name_tok))
+                break
+        self._eat("RBRACKET")
+        return ListLit(items=items, loc=self._loc(tok))
 
-    def use_decl(self, items):
-        path_tok = items[0]
-        raw = str(path_tok)
-        path = raw.strip('"')
-        alias = str(items[1]) if len(items) > 1 else None
-        return UseDecl(path=path, alias=alias, loc=_tok_loc(path_tok))
-
-    def ns_decl(self, items):
-        name_tok = items[0]
-        body = [i for i in items[1:] if isinstance(i, Assign)]
-        return NsDecl(name=str(name_tok), body=body, loc=_tok_loc(name_tok))
-
-    # --- Literals ---
-
-    def int_lit(self, items):
-        tok = items[0]
-        return IntLit(value=int(tok), loc=_tok_loc(tok))
-
-    def float_lit(self, items):
-        tok = items[0]
-        return FloatLit(value=float(tok), loc=_tok_loc(tok))
-
-    def str_lit(self, items):
-        tok = items[0]
-        s = str(tok)
-        value = s[1:-1].encode("raw_unicode_escape").decode("unicode_escape")
-        return StrLit(value=value, loc=_tok_loc(tok))
-
-    def true_lit(self, items):
-        return BoolLit(value=True)
-
-    def false_lit(self, items):
-        return BoolLit(value=False)
-
-    def none_lit(self, items):
-        return NoneLit()
-
-    def ident(self, items):
-        tok = items[0]
-        return Ident(name=str(tok), loc=_tok_loc(tok))
-
-    # --- Collections ---
-
-    def list_lit(self, items):
-        return ListLit(items=list(items))
-
-    def obj_lit(self, items):
-        return ObjLit(entries=list(items))
-
-    def obj_field(self, items):
-        key_tok, value = items
-        return ObjField(key=str(key_tok), value=value, loc=_tok_loc(key_tok))
-
-    def obj_spread(self, items):
-        return ObjSpread(obj=items[0])
-
-    def obj_shorthand(self, items):
-        tok = items[0]
-        return ObjShorthand(key=str(tok), loc=_tok_loc(tok))
-
-    def tuple_lit(self, items):
-        return TupleLit(items=list(items))
-
-    def range_expr(self, items):
-        tok = items[0]
-        start, end = str(tok).split("..")
-        return Range(start=int(start), end=int(end), loc=_tok_loc(tok))
-
-    def spread_expr(self, items):
-        return Spread(obj=items[0])
-
-    # --- Unary ops ---
-
-    def neg(self, items):
-        return Neg(operand=items[-1])
-
-    # --- Binary ops ---
-
-    def binop(self, items):
-        left, op_tok, right = items
-        return BinOp(op=str(op_tok), left=left, right=right)
-
-    # --- Field access ---
-
-    def field_access(self, items):
-        obj, name_tok = items
-        return FieldAccess(obj=obj, field=str(name_tok))
-
-    # --- Calls ---
-
-    def call_expr(self, items):
-        func = items[0]
-        args, kwargs = self._split_args(items[1:])
-        return Call(func=func, args=args, kwargs=kwargs, block=None)
-
-    def call_with_block(self, items):
-        func = items[0]
-        block = None
-        rest = items[1:]
-        if rest and isinstance(rest[-1], list):
-            block = rest[-1]
-            rest = rest[:-1]
-        args, kwargs = self._split_args(rest)
-        return Call(func=func, args=args, kwargs=kwargs, block=block)
-
-    def _split_args(self, items):
-        args = []
-        kwargs = {}
-        for item in items:
-            if isinstance(item, list):
-                for sub in item:
-                    if isinstance(sub, tuple):
-                        kwargs[sub[0]] = sub[1]
-                    elif sub is not None:
-                        args.append(sub)
-            elif isinstance(item, tuple):
-                kwargs[item[0]] = item[1]
-            elif item is not None:
-                args.append(item)
-        return args, kwargs
-
-    def arglist(self, items):
-        return list(items)
-
-    def posarg(self, items):
-        return items[0]
-
-    def kwarg(self, items):
-        key_tok, value = items[0], items[1]
-        return (str(key_tok), value)
-
-    # --- Block (sub-pipe for group) ---
-
-    def block(self, items):
-        return [i for i in items if isinstance(i, PipeStep)]
-
-    # --- Pipe ---
-
-    def pipe_step(self, items):
-        expr = items[0]
-        quiet = any(isinstance(i, Token) and i.type == "QUIET" for i in items)
-        return PipeStep(expr=expr, quiet=quiet)
-
-    def pipe_expr(self, items):
-        if len(items) == 2 and isinstance(items[1], PipeStep):
-            left, step = items
-            if isinstance(left, Pipe):
-                left.steps.append(step)
-                return left
+    def _parse_obj(self) -> ObjLit:
+        tok = self._eat("LBRACE")
+        self._skip_nl()
+        entries = []
+        while not self._at("RBRACE", "EOF"):
+            if self._at("SPREAD"):
+                spread_tok = self._eat("SPREAD")
+                obj = self._parse_postfix()
+                entries.append(ObjSpread(obj=obj, loc=self._loc(spread_tok)))
+            elif self._at("NAME"):
+                name_tok = self._eat("NAME")
+                if self._at("COLON"):
+                    self._eat("COLON")
+                    self._skip_nl()
+                    val = self._parse_expr()
+                    entries.append(ObjField(key=name_tok.value, value=val, loc=self._loc(name_tok)))
+                else:
+                    entries.append(ObjShorthand(key=name_tok.value, loc=self._loc(name_tok)))
             else:
-                return Pipe(steps=[left, step])
-        return items[0]
+                break
+            self._skip_nl()
+            if self._at("COMMA"):
+                self._eat("COMMA")
+                self._skip_nl()
+            else:
+                break
+        self._eat("RBRACE")
+        return ObjLit(entries=entries, loc=self._loc(tok))
 
-    # --- Lambda ---
+    def _parse_match(self) -> Match:
+        tok = self._eat("MATCH")
+        loc = self._loc(tok)
+        self._eat("LPAREN")
+        self._skip_nl()
+        subject = self._parse_expr()
+        self._skip_nl()
+        self._eat("COMMA")
+        self._skip_nl()
+        arms = []
+        while not self._at("RPAREN", "EOF"):
+            arms.append(self._parse_match_arm())
+            self._skip_nl()
+            if self._at("COMMA"):
+                self._eat("COMMA")
+                self._skip_nl()
+            else:
+                break
+        self._eat("RPAREN")
+        return Match(subject=subject, arms=arms, loc=loc)
 
-    def _extract_params(self, items):
-        """Extract params list and body from lambda items."""
-        body = items[-1]
-        non_arrow = [i for i in items[:-1] if not (isinstance(i, Token) and i.type == "ARROW")]
-        if non_arrow and isinstance(non_arrow[0], list):
-            return non_arrow[0], body
-        return [str(t) for t in non_arrow if isinstance(t, Token) and t.type == "NAME"], body
+    _PAT_CMP = {"GT": ">", "LT": "<", "GTE": ">=", "LTE": "<=", "EQ": "==", "NEQ": "!="}
 
-    def lambda_expr(self, items):
-        params, body = self._extract_params(items)
-        return Lambda(params=params, body=body)
-
-    def lambda_expr_noargs(self, items):
-        body = [i for i in items if not isinstance(i, Token)]
-        return Lambda(params=[], body=body[0])
-
-    def lambda_body(self, items):
-        params, body = self._extract_params(items)
-        return Lambda(params=params, body=body)
-
-    def lambda_body_noargs(self, items):
-        return Lambda(params=[], body=items[0])
-
-    # --- Match ---
-
-    def match_expr(self, items):
-        subject = items[0]
-        arms = [i for i in items[1:] if isinstance(i, MatchArm)]
-        return Match(subject=subject, arms=arms)
-
-    def match_arm(self, items):
-        pattern, body = items
+    def _parse_match_arm(self) -> MatchArm:
+        tok = self._peek()
+        if tok.type in self._PAT_CMP:
+            self._eat(tok.type)
+            pat_val = self._parse_pat_val()
+            pattern = PatComparison(op=self._PAT_CMP[tok.type], value=pat_val)
+        elif tok.type == "NAME" and tok.value == "_":
+            self._eat("NAME")
+            pattern = PatWildcard(loc=self._loc(tok))
+        elif tok.type == "NAME" and tok.value == "Ok":
+            self._eat("NAME")
+            self._eat("LPAREN")
+            name = self._eat("NAME").value
+            self._eat("RPAREN")
+            pattern = PatOk(name=name, loc=self._loc(tok))
+        elif tok.type == "NAME" and tok.value == "Err":
+            self._eat("NAME")
+            self._eat("LPAREN")
+            name = self._eat("NAME").value
+            self._eat("RPAREN")
+            pattern = PatErr(name=name, loc=self._loc(tok))
+        else:
+            raise ParseError(f"expected match pattern, got {tok.type}", tok.line, tok.col)
+        self._eat("COLON")
+        self._skip_nl()
+        body = self._parse_expr()
         return MatchArm(pattern=pattern, body=body)
 
-    def pat_val(self, items):
-        node = items[0]
-        if isinstance(node, Ident):
-            return node
-        if isinstance(node, Token) and node.type == "NAME":
-            return Ident(name=str(node))
-        return self._lit(node)
+    def _parse_pat_val(self):
+        tok = self._peek()
+        if tok.type == "INT":
+            self._eat("INT")
+            return int(tok.value)
+        if tok.type == "FLOAT":
+            self._eat("FLOAT")
+            return float(tok.value)
+        if tok.type == "STRING":
+            self._eat("STRING")
+            return tok.value[1:-1].encode("raw_unicode_escape").decode("unicode_escape")
+        if tok.type == "NAME":
+            self._eat("NAME")
+            return Ident(name=tok.value, loc=self._loc(tok))
+        raise ParseError(f"expected pattern value, got {tok.type}", tok.line, tok.col)
 
-    def pat_gt(self, items):   return PatComparison(op=">",  value=items[0])
-    def pat_lt(self, items):   return PatComparison(op="<",  value=items[0])
-    def pat_gte(self, items):  return PatComparison(op=">=", value=items[0])
-    def pat_lte(self, items):  return PatComparison(op="<=", value=items[0])
-    def pat_eq(self, items):   return PatComparison(op="==", value=items[0])
-    def pat_neq(self, items):  return PatComparison(op="!=", value=items[0])
 
-    def pat_ok(self, items):
-        return PatOk(name=str(items[0]))
+class _ContPipe:
+    def __init__(self, steps):
+        self.steps = steps
 
-    def pat_err(self, items):
-        return PatErr(name=str(items[0]))
 
-    def pat_tuple(self, items):
-        return PatTuple(patterns=list(items))
+def parse(src: str) -> Program:
+    if not src.endswith("\n"):
+        src += "\n"
+    tokens = tokenize(src)
+    return Parser(tokens).parse_program()
 
-    def pat_wildcard(self, items):
-        return PatWildcard()
 
-    def literal(self, items):
-        return items[0]
-
-    def _lit(self, node):
-        if isinstance(node, (IntLit, FloatLit, StrLit)):
-            return node.value
-        if isinstance(node, Token):
-            try:
-                return int(node)
-            except ValueError:
-                try:
-                    return float(node)
-                except ValueError:
-                    return str(node).strip('"')
-        return node
+# Keep _normalize as a no-op shim so test imports don't break
+def _normalize(src: str) -> str:
+    return src

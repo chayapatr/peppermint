@@ -176,7 +176,6 @@ Python files are loaded via the bridge — functions receive and return plain Py
 { name: "alice", age: 25 }         # object
 { ...existing, score: 42 }         # object spread
 { name, age }                      # object shorthand — same as { name: name, age: age }
-(1, "hello", true)                 # tuple
 1..10                              # range
 ```
 
