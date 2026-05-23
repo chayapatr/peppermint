@@ -4,10 +4,10 @@ use math
 W = 8
 
 at = (grid, x, y) ->
-  match(x, < 0: 0, >= W: 0,
-    _: match(y, < 0: 0, >= W: 0,
-      _: grid[y * W + x]
-    )
+  match(
+    x, < 0: 0, >= W: 0,
+    _: match(y, < 0: 0, >= W: 0, _: grid[y * W + x]
+)
   )
 
 neighbors = (grid, x, y) ->
