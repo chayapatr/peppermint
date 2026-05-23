@@ -42,14 +42,9 @@ def _repl_display(value):
         val_str = str(value)
         type_str = type(value).__name__
 
-    prefix = "\033[32m<<<\033[0m"
-    # "<<< " is 4 chars; pad so arrow aligns at col 34 (matching pipe step)
-    if type_str:
-        pad = max(0, 34 - 4 - len(val_str))
-        tag = f"\033[33m← {type_str}\033[0m"
-        print(f"{prefix} {val_str}{' ' * pad}\033[33m←\033[0m \033[33m{type_str}\033[0m")
-    else:
-        print(f"{prefix} {val_str}")
+    pad = max(2, 34 - len(val_str))
+    type_tag = f"\033[33m[{type_str}]\033[0m" if type_str else ""
+    print(f"\033[2m{val_str}\033[0m{' ' * pad}{type_tag}")
 
 
 def run_file(args):
