@@ -205,8 +205,9 @@ class Interpreter:
         items = [self.eval(i, env) for i in node.items]
         if items and all(isinstance(i, dict) for i in items):
             schema = {k: type(v) for k, v in items[0].items()}
-            return ListValue(rows=items, schema=schema)
-        return items
+        else:
+            schema = {}
+        return ListValue(rows=items, schema=schema)
 
     # --- Object literal ---
 
@@ -254,22 +255,25 @@ class Interpreter:
                 step_result = self.eval_call(step.expr, value, env)
                 result = step_result if isinstance(step_result, (Ok, Err)) else Ok(step_result)
             except Exception as e:
-                result = Err(str(e))
+                step_name = self._call_name(step.expr)
+                result = Err(f"{step_name}: {e}")
 
             after = result.value if isinstance(result, Ok) else result
-            if show and isinstance(before, ListValue) and isinstance(after, ListValue):
+            if show and isinstance(after, ListValue):
                 self._print_step(step.expr, before, after)
-            elif show and isinstance(after, ListValue) and before is None:
-                self._print_step(step.expr, None, after)
 
         return result
 
     def _print_step(self, call_node, before: ListValue | None, after: ListValue):
+        import sys
         name = self._call_name(call_node)
         desc = f"|> {name}"
         rows = len(after.rows)
         cols = len(after.schema)
-        line = f"{desc:<30} → List  {rows} rows × {cols} cols"
+        if cols > 0:
+            line = f"{desc:<30} → List  {rows} rows × {cols} cols"
+        else:
+            line = f"{desc:<30} → List  {rows} items"
         if before is not None:
             dropped = len(before.rows) - rows
             added_cols = set(after.schema) - set(before.schema)
@@ -277,7 +281,6 @@ class Interpreter:
                 line += f"  ({dropped} dropped)"
             if added_cols:
                 line += f"  (+{', '.join(added_cols)})"
-        import sys
         print(line, file=sys.stderr)
 
     def _call_name(self, node) -> str:

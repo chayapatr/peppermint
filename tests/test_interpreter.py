@@ -114,7 +114,8 @@ def test_obj_spread():
 
 def test_plain_list():
     result = val("[1, 2, 3]")
-    assert result == [1, 2, 3]
+    assert isinstance(result, ListValue)
+    assert result.rows == [1, 2, 3]
 
 def test_list_of_dicts_becomes_listvalue():
     result = val('[{ name: "alice" }, { name: "bob" }]')
@@ -134,11 +135,13 @@ def test_listvalue_schema():
 
 def test_pipe_map():
     result = val('[1, 2, 3] |> map(it * 2)')
-    assert result == [2, 4, 6]
+    assert isinstance(result, ListValue)
+    assert result.rows == [2, 4, 6]
 
 def test_pipe_filter():
     result = val('[1, 2, 3, 4] |> filter(it > 2)')
-    assert result == [3, 4]
+    assert isinstance(result, ListValue)
+    assert result.rows == [3, 4]
 
 def test_pipe_reduce():
     result = val('[1, 2, 3, 4] |> reduce(0, (acc, x) -> acc + x)')

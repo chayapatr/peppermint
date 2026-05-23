@@ -5,8 +5,8 @@ import pandas as pd
 from ..interpreter import Ok, Err, ListValue, PmFunction
 
 
-def _infer_schema(rows: list[dict]) -> dict[str, type]:
-    if not rows:
+def _infer_schema(rows: list) -> dict[str, type]:
+    if not rows or not isinstance(rows[0], dict):
         return {}
     return {k: type(v) for k, v in rows[0].items()}
 
@@ -33,11 +33,7 @@ def _to_list(data) -> tuple[list, bool]:
 
 
 def _from_list(items: list, is_object_list: bool):
-    if items and isinstance(items[0], dict):
-        return _list_value(items)
-    if is_object_list and not items:
-        return _list_value([])
-    return items
+    return _list_value(items)
 
 
 def _unwrap(v):
