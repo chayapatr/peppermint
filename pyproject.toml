@@ -3,7 +3,7 @@ requires = ["setuptools"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "peppermint"
+name = "peppermint-lang"
 version = "0.1.0"
 description = "A pipe-first DSL for data and ML work"
 readme = "README.md"

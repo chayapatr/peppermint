@@ -13,16 +13,20 @@ nb_mid = (grid, x, y) -> safe(grid, x-1, y) + safe(grid, x+1, y)
 nb_bot = (grid, x, y) -> safe(grid, x-1, y+1) + safe(grid, x, y+1) + safe(grid, x+1, y+1)
 neighbors = (grid, x, y) -> nb_top(grid, x, y) + nb_mid(grid, x, y) + nb_bot(grid, x, y)
 
-next_cell = (grid, x, y) -> (cell -> (n -> match(cell,
-  == 1: match(n, == 2: 1, == 3: 1, _: 0),
-  _:    match(n, == 3: 1, _: 0)
-))(neighbors(grid, x, y)))(get2d(grid, x, y))
+next_cell = (grid, x, y) -> (
+  cell = get2d(grid, x, y)
+  n = neighbors(grid, x, y)
+  match(cell,
+    == 1: match(n, == 2: 1, == 3: 1, _: 0),
+    _:    match(n, == 3: 1, _: 0)
+  )
+)
 
-next_gen = grid -> mapi(grid, next_cell(grid, it.index % 8, math.floor(it.index / 8)))
+next_gen = grid -> mapi(grid, next_cell(grid, it.idx % 8, math.floor(it.idx / 8)))
 
 cell_char = (grid, i) -> match(get(grid, i), == 1: "#", _: ".")
 sep = i -> match(i % 8, == 0: "\n", _: "")
-render = grid -> str.join(mapi(grid, str.join([sep(it.index), cell_char(grid, it.index)], "")), "")
+render = grid -> str.join(mapi(grid, str.join([sep(it.idx), cell_char(grid, it.idx)], "")), "")
 
 run = (grid, n) -> match(n, == 0: grid, _: run(next_gen(grid), n - 1))
 
@@ -39,16 +43,8 @@ glider = [
 
 
 f = x -> (
-
-  print(
-    render(
-      run(
-        glider,
-        x)));
-        print(x);
-  match(x,
-    < 20:
-    f(x+1), _: 0)
-  )
+  run(glider, x) |> render() |> print()
+  match(x, < 20: f(x+1), _: 0)
+)
 
 f(0)

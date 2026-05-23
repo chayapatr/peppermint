@@ -89,10 +89,10 @@ def map_(data, transform, _interp=None, _env=None, **_) -> ListValue:
 
 
 def mapi(data, transform, _interp=None, _env=None, **_) -> ListValue:
-    """map with index — it is {index: i, value: x}"""
+    """map with index — it is {idx: i, value: x}"""
     items, _ = _to_list(data)
     fn = _interp.make_row_fn(transform, _env)
-    out = [_unwrap(fn({"index": i, "value": x})) for i, x in enumerate(items)]
+    out = [_unwrap(fn({"idx": i, "value": x})) for i, x in enumerate(items)]
     return _from_list(out, False)
 
 

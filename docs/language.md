@@ -93,7 +93,20 @@ clean = data -> (
 )
 ```
 
-Parentheses let the body span multiple lines — newlines inside `( )` are ignored. Semicolons work as statement separators inside `( )`:
+Parentheses let the body span multiple lines. Assignments inside `( )` are local — they don't leak into the outer scope:
+
+```
+next_cell = (grid, x, y) -> (
+  cell = get(grid, x, y)
+  n    = neighbors(grid, x, y)
+  match(cell,
+    == 1: match(n, == 2: 1, == 3: 1, _: 0),
+    _:    match(n, == 3: 1, _: 0)
+  )
+)
+```
+
+The last expression is the return value. Semicolons also work as statement separators:
 
 ```
 f = x -> (print(x); f(x - 1))

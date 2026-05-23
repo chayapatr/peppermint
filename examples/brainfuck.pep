@@ -20,19 +20,24 @@ find_open = (prog, ip, depth) -> match(depth,
   )
 )
 
-# helper to build next state
-next = (state, tape, ptr, ip) -> {tape: tape, ptr: ptr, ip: ip, prog: state.prog, output: state.output}
-
 # one brainfuck step
-step = state -> match(str.at(state.prog, state.ip),
-  == "+": next(state, set(state.tape, state.ptr, get(state.tape, state.ptr) + 1), state.ptr, state.ip + 1),
-  == "-": next(state, set(state.tape, state.ptr, get(state.tape, state.ptr) - 1), state.ptr, state.ip + 1),
-  == ">": next(state, state.tape, state.ptr + 1, state.ip + 1),
-  == "<": next(state, state.tape, state.ptr - 1, state.ip + 1),
-  == ".": {tape: state.tape, ptr: state.ptr, ip: state.ip + 1, prog: state.prog, output: str.join([state.output, str.char(get(state.tape, state.ptr))], "")},
-  == "[": next(state, state.tape, state.ptr, match(get(state.tape, state.ptr), == 0: find_close(state.prog, state.ip + 1, 1), _: state.ip + 1)),
-  == "]": next(state, state.tape, state.ptr, match(get(state.tape, state.ptr), == 0: state.ip + 1, _: find_open(state.prog, state.ip - 1, 1))),
-  _: next(state, state.tape, state.ptr, state.ip + 1)
+step = state -> (
+  tape = state.tape
+  ptr  = state.ptr
+  ip   = state.ip
+  prog = state.prog
+  out  = state.output
+  cell = get(tape, ptr)
+  match(str.at(prog, ip),
+    == "+": {tape: set(tape, ptr, cell + 1), ptr: ptr, ip: ip + 1, prog: prog, output: out},
+    == "-": {tape: set(tape, ptr, cell - 1), ptr: ptr, ip: ip + 1, prog: prog, output: out},
+    == ">": {tape: tape, ptr: ptr + 1,       ip: ip + 1, prog: prog, output: out},
+    == "<": {tape: tape, ptr: ptr - 1,       ip: ip + 1, prog: prog, output: out},
+    == ".": {tape: tape, ptr: ptr,           ip: ip + 1, prog: prog, output: str.join([out, str.char(cell)], "")},
+    == "[": {tape: tape, ptr: ptr, ip: match(cell, == 0: find_close(prog, ip + 1, 1), _: ip + 1), prog: prog, output: out},
+    == "]": {tape: tape, ptr: ptr, ip: match(cell, == 0: ip + 1, _: find_open(prog, ip - 1, 1)),  prog: prog, output: out},
+    _:      {tape: tape, ptr: ptr,           ip: ip + 1, prog: prog, output: out}
+  )
 )
 
 # run until ip reaches end of program

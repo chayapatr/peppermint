@@ -258,7 +258,7 @@ class Parser:
         return self._parse_pipe()
 
     def _try_parse_lambda_paren(self):
-        """Try to parse `(params) -> body` or `() -> body`. Returns None if not a lambda."""
+        """Try to parse `(params) -> body` or `() -> body`. Raises ParseError if not a lambda."""
         tok = self._eat("LPAREN")
         loc = self._loc(tok)
         self._skip_nl()
@@ -267,14 +267,14 @@ class Parser:
             # () -> ...
             self._eat("RPAREN")
             if not self._at("ARROW"):
-                return None
+                raise ParseError(self._cur().line, self._cur().col, "not a lambda")
             self._eat("ARROW")
             body = self._parse_lambda_body()
             return Lambda(params=[], body=body, loc=loc)
 
         # Try to collect NAME, NAME, ... then RPAREN ARROW
         if not self._at("NAME"):
-            return None
+            raise ParseError(self._cur().line, self._cur().col, "not a lambda")
         params = [self._eat("NAME").value]
         self._skip_nl()
         while self._at("COMMA"):
@@ -284,7 +284,7 @@ class Parser:
             self._skip_nl()
         self._eat("RPAREN")
         if not self._at("ARROW"):
-            return None
+            raise ParseError(self._cur().line, self._cur().col, "not a lambda")
         self._eat("ARROW")
         body = self._parse_lambda_body()
         return Lambda(params=params, body=body, loc=loc)
@@ -293,8 +293,11 @@ class Parser:
         return self._parse_pipe()
 
     def _parse_paren_item(self):
-        """An item inside paren_body: a full expr (including lambda) optionally followed by |> steps."""
-        node = self._parse_expr()
+        """An item inside paren_body: assignment or full expr, optionally followed by |> steps."""
+        if self._at("NAME") and self._peek2().type == "EQUALS":
+            node = self._parse_assign()
+        else:
+            node = self._parse_expr()
         # Allow inline pipe continuations after the expr (when not already consumed by pipe_or_cmp)
         while self._at("PIPE"):
             self._eat("PIPE")

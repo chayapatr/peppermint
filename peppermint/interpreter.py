@@ -263,9 +263,10 @@ class Interpreter:
     # --- Pipe ---
 
     def eval_block(self, node: Block, env: Env) -> Any:
+        block_env = Env(parent=env)
         result = None
         for stmt in node.stmts:
-            result = self.eval(stmt, env)
+            result = self.eval(stmt, block_env)
         return result
 
     def eval_pipe(self, node: Pipe, env: Env) -> Any:
@@ -427,12 +428,13 @@ class Interpreter:
         return Err("no match")
 
     def eval_block_tail(self, node: Block, env: Env) -> Any:
+        block_env = Env(parent=env)
         result = None
         for i, stmt in enumerate(node.stmts):
             if i == len(node.stmts) - 1:
-                result = self.eval_tail(stmt, env)
+                result = self.eval_tail(stmt, block_env)
             else:
-                result = self.eval(stmt, env)
+                result = self.eval(stmt, block_env)
         return result
 
     # --- Match ---
