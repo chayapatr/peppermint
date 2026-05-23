@@ -43,7 +43,7 @@ _TOKEN_RE = re.compile(r"""
     (?P<COMMENT>  \#[^\n]*                                )
 """, re.VERBOSE)
 
-_KEYWORDS = {"true", "false", "none", "ns", "use", "as", "quiet", "match"}
+_KEYWORDS = {"true", "false", "none", "ns", "use", "as", "quiet", "match", "and", "or", "not"}
 
 
 class Token:
@@ -290,6 +290,7 @@ class Parser:
         return Lambda(params=params, body=body, loc=loc)
 
     def _parse_lambda_body(self):
+        self._skip_nl()
         return self._parse_pipe()
 
     def _parse_paren_item(self):
@@ -313,7 +314,7 @@ class Parser:
         return node
 
     def _parse_pipe_or_cmp(self):
-        node = self._parse_cmp()
+        node = self._parse_logic()
         while self._at("PIPE"):
             self._eat("PIPE")
             step = self._parse_pipe_step()
@@ -330,6 +331,14 @@ class Parser:
             self._eat("QUIET")
             quiet = True
         return PipeStep(expr=expr, quiet=quiet)
+
+    def _parse_logic(self):
+        node = self._parse_cmp()
+        while self._at("AND", "OR"):
+            op_tok = self._eat("AND", "OR")
+            right = self._parse_cmp()
+            node = BinOp(op=op_tok.value, left=node, right=right)
+        return node
 
     _CMP_OPS = {"GT", "LT", "GTE", "LTE", "EQ", "NEQ"}
     _CMP_STR = {"GT": ">", "LT": "<", "GTE": ">=", "LTE": "<=", "EQ": "==", "NEQ": "!="}
@@ -365,9 +374,12 @@ class Parser:
     def _parse_unary(self):
         if self._at("MINUS"):
             tok = self._eat("MINUS")
-            # Avoid consuming a negative number literal (already handled in atom)
             operand = self._parse_postfix()
             return Neg(operand=operand, loc=self._loc(tok))
+        if self._at("NOT"):
+            tok = self._eat("NOT")
+            operand = self._parse_unary()
+            return BinOp(op="not", left=operand, right=None, loc=self._loc(tok))
         return self._parse_postfix()
 
     def _parse_postfix(self):

@@ -215,6 +215,19 @@ class Interpreter:
     # --- Binary ops ---
 
     def eval_binop(self, node: BinOp, env: Env) -> Any:
+        # Short-circuit for and/or/not
+        if node.op == "and":
+            left = self.eval(node.left, env)
+            left = left.value if isinstance(left, Ok) else left
+            return left and self.eval(node.right, env)
+        if node.op == "or":
+            left = self.eval(node.left, env)
+            left = left.value if isinstance(left, Ok) else left
+            return left or self.eval(node.right, env)
+        if node.op == "not":
+            left = self.eval(node.left, env)
+            left = left.value if isinstance(left, Ok) else left
+            return not left
         left = self.eval(node.left, env)
         right = self.eval(node.right, env)
         left = left.value if isinstance(left, Ok) else left
