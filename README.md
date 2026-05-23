@@ -1,6 +1,6 @@
 # Peppermint
 
-A pipe-first language for data work.
+A pipe-first DSL for data and ML work. Designed to be lightweight and readable, where every operation is a pipeline step, errors propagate automatically, and the heavy lifting happens internally so you don't have to worry about it.
 
 ## Install
 
