@@ -25,6 +25,8 @@ def _eval_arg(arg, interp, env):
 
 
 def _to_list(data) -> tuple[list, bool]:
+    if isinstance(data, Ok):
+        return _to_list(data.value)
     if isinstance(data, ListValue):
         return data.rows, True
     if isinstance(data, list):
@@ -79,11 +81,19 @@ def filter_(data, pred, _interp=None, _env=None, **_) -> ListValue | list:
     return _from_list(out, is_obj)
 
 
-def map_(data, transform, _interp=None, _env=None, **_) -> ListValue | list:
-    items, is_obj = _to_list(data)
+def map_(data, transform, _interp=None, _env=None, **_) -> ListValue:
+    items, _ = _to_list(data)
     fn = _interp.make_row_fn(transform, _env)
     out = [_unwrap(fn(item)) for item in items]
-    return _from_list(out, is_obj)
+    return _from_list(out, False)
+
+
+def mapi(data, transform, _interp=None, _env=None, **_) -> ListValue:
+    """map with index — it is {index: i, value: x}"""
+    items, _ = _to_list(data)
+    fn = _interp.make_row_fn(transform, _env)
+    out = [_unwrap(fn({"index": i, "value": x})) for i, x in enumerate(items)]
+    return _from_list(out, False)
 
 
 def add(data: ListValue, _interp=None, _env=None, **kwargs) -> ListValue:
@@ -223,12 +233,40 @@ def agg(data, _interp=None, _env=None, **kwargs) -> ListValue | dict:
     return result
 
 
+def get(data, i, _interp=None, _env=None, **_):
+    items, _ = _to_list(data)
+    i = _eval_arg(i, _interp, _env)
+    if isinstance(i, Ok): i = i.value
+    return items[int(i)]
+
+
+def set_(data, i, v, _interp=None, _env=None, **_):
+    items, _ = _to_list(data)
+    i = _eval_arg(i, _interp, _env)
+    if isinstance(i, Ok): i = i.value
+    v = _eval_arg(v, _interp, _env)
+    if isinstance(v, Ok): v = v.value
+    new = list(items)
+    new[int(i)] = v
+    return _from_list(new, False)
+
+
+def length(data, _interp=None, _env=None, **_):
+    items, _ = _to_list(data)
+    return len(items)
+
+
+for _fn in (filter_, map_, mapi, add, sort, reduce, group, agg, sum_, mean_, count_, min_, max_):
+    _fn._accepts_deferred = True
+
+
 def build_core_env() -> dict:
     return {
         "load":   load,
         "save":   save,
         "filter": filter_,
         "map":    map_,
+        "mapi":   mapi,
         "add":    add,
         "drop":   drop,
         "select": select,
@@ -244,4 +282,7 @@ def build_core_env() -> dict:
         "min":    min_,
         "max":    max_,
         "print":  print_,
+        "get":    get,
+        "set":    set_,
+        "length": length,
     }

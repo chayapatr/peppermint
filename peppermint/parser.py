@@ -33,18 +33,55 @@ class PeppermintTransformer(Transformer):
 
     # --- Program ---
 
-    def program(self, items):
-        stmts = [i for i in items if i is not None]
-        # Pass 1: merge TupleLit/single-paren back into calls when earley splits them
-        # e.g. "f(a, b)" after a prior statement gets parsed as Ident(f) + TupleLit(a,b)
+    def _coalesce(self, stmts):
+        """Merge Ident/FieldAccess/Call followed by TupleLit into a Call node."""
         coalesced = []
         for node in stmts:
-            if coalesced and isinstance(node, TupleLit) and self._is_callable(coalesced[-1]):
-                func = coalesced.pop()
-                coalesced.append(Call(func=func, args=node.items, kwargs={}, block=None))
-            else:
-                coalesced.append(node)
-        stmts = coalesced
+            if coalesced and isinstance(node, TupleLit):
+                if self._try_merge_tuple(coalesced, node):
+                    continue
+            coalesced.append(node)
+        return coalesced
+
+    def _try_merge_tuple(self, coalesced, tup) -> bool:
+        """Try to merge a TupleLit into the tail-callable of the previous node. Returns True if merged."""
+        prev = coalesced[-1]
+
+        # Direct callable: f (a, b)
+        if self._is_callable(prev):
+            coalesced.pop()
+            coalesced.append(Call(func=prev, args=tup.items, kwargs={}, block=None))
+            return True
+
+        # Assign whose value tail is callable
+        if isinstance(prev, Assign):
+            if self._merge_into(prev, 'value', tup):
+                return True
+
+        # BinOp whose right tail is callable (e.g. a + b + f (x, y))
+        if isinstance(prev, BinOp):
+            if self._merge_into(prev, 'right', tup):
+                return True
+
+        return False
+
+    def _merge_into(self, node, attr, tup) -> bool:
+        """Recursively find and merge TupleLit into the rightmost callable in node.attr."""
+        val = getattr(node, attr)
+        if self._is_callable(val):
+            setattr(node, attr, Call(func=val, args=tup.items, kwargs={}, block=None))
+            return True
+        if isinstance(val, Lambda):
+            if self._merge_into(val, 'body', tup):
+                return True
+        if isinstance(val, BinOp):
+            if self._merge_into(val, 'right', tup):
+                return True
+        return False
+
+    def program(self, items):
+        stmts = [i for i in items if i is not None]
+        stmts = self._coalesce(stmts)
 
         # Pass 2: merge cont_pipe nodes onto the previous statement
         merged = []
@@ -86,11 +123,15 @@ class PeppermintTransformer(Transformer):
         return Pipe(steps=[source] + extra)
 
     def paren_seq(self, items):
+        items = self._coalesce(items)
         if len(items) == 1:
             return items[0]
         return Block(stmts=items)
 
     def seq_expr(self, items):
+        items = self._coalesce(items)
+        if len(items) == 1:
+            return items[0]
         return Block(stmts=items)
 
     # --- Statements ---
@@ -288,12 +329,20 @@ class PeppermintTransformer(Transformer):
         pattern, body = items
         return MatchArm(pattern=pattern, body=body)
 
-    def pat_gt(self, items):   return PatComparison(op=">",  value=self._lit(items[0]))
-    def pat_lt(self, items):   return PatComparison(op="<",  value=self._lit(items[0]))
-    def pat_gte(self, items):  return PatComparison(op=">=", value=self._lit(items[0]))
-    def pat_lte(self, items):  return PatComparison(op="<=", value=self._lit(items[0]))
-    def pat_eq(self, items):   return PatComparison(op="==", value=self._lit(items[0]))
-    def pat_neq(self, items):  return PatComparison(op="!=", value=self._lit(items[0]))
+    def pat_val(self, items):
+        node = items[0]
+        if isinstance(node, Ident):
+            return node
+        if isinstance(node, Token) and node.type == "NAME":
+            return Ident(name=str(node))
+        return self._lit(node)
+
+    def pat_gt(self, items):   return PatComparison(op=">",  value=items[0])
+    def pat_lt(self, items):   return PatComparison(op="<",  value=items[0])
+    def pat_gte(self, items):  return PatComparison(op=">=", value=items[0])
+    def pat_lte(self, items):  return PatComparison(op="<=", value=items[0])
+    def pat_eq(self, items):   return PatComparison(op="==", value=items[0])
+    def pat_neq(self, items):  return PatComparison(op="!=", value=items[0])
 
     def pat_ok(self, items):
         return PatOk(name=str(items[0]))

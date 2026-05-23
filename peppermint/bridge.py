@@ -49,7 +49,9 @@ def to_python(val) -> Any:
     if isinstance(val, Err):
         raise RuntimeError(val.msg)
     if isinstance(val, ListValue):
-        return val.rows          # list[dict]
+        return [to_python(r) for r in val.rows]
+    if isinstance(val, list):
+        return [to_python(r) for r in val]
     return val
 
 

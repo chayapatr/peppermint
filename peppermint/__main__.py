@@ -1,5 +1,6 @@
 import sys
 import argparse
+sys.setrecursionlimit(50000)
 from .parser import parse
 from .interpreter import Interpreter, Err, Ok
 from .stdlib import build_global_env

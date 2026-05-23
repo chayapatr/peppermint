@@ -1,7 +1,35 @@
 from __future__ import annotations
+import inspect
 from dataclasses import dataclass
 from typing import Any
 from .ast_nodes import *
+
+_fn_accepts_interp: dict = {}
+
+def _check_accepts_interp(fn) -> bool:
+    """Return True if fn accepts **kwargs or explicit _interp parameter."""
+    cached = _fn_accepts_interp.get(id(fn))
+    if cached is not None:
+        return cached
+    try:
+        sig = inspect.signature(fn)
+        result = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD or p.name == '_interp'
+            for p in sig.parameters.values()
+        )
+    except (ValueError, TypeError):
+        result = False
+    _fn_accepts_interp[id(fn)] = result
+    return result
+
+
+# --- Tail call sentinel ---
+
+@dataclass
+class _TailCall:
+    fn: "PmFunction"
+    args: list
+    env: "Env"
 
 
 # --- Runtime values ---
@@ -171,6 +199,8 @@ class Interpreter:
 
     def eval_field(self, node: FieldAccess, env: Env) -> Any:
         obj = self.eval(node.obj, env)
+        if isinstance(obj, Ok):
+            obj = obj.value
         if isinstance(obj, dict):
             if node.field not in obj:
                 available = ", ".join(obj.keys())
@@ -297,7 +327,7 @@ class Interpreter:
 
     # --- Call ---
 
-    def eval_call(self, node: Call, pipe_value: Any, env: Env) -> Any:
+    def eval_call(self, node: Call, pipe_value: Any, env: Env, tail: bool = False) -> Any:
         # Resolve the callable
         if isinstance(node.func, FieldAccess):
             ns = self.eval(node.func.obj, env)
@@ -323,15 +353,24 @@ class Interpreter:
                 return v.value if isinstance(v, Ok) else v
             args = pre + [_unwrap(self.eval(a, env)) for a in node.args]
             kwargs = {k: _unwrap(self.eval(v, env)) for k, v in node.kwargs.items()}
+            if tail:
+                return _TailCall(fn=fn, args=args, env=env)
             return self._call_pm_function(fn, args, kwargs, node.block, env)
         elif callable(fn):
-            # Stdlib Python functions: eagerly evaluate args that don't reference `it`,
-            # defer AST nodes only for row-dependent expressions (make_row_fn will handle them).
-            args = pre + [self._eval_or_defer(a, env) for a in node.args]
-            kwargs = {k: self._eval_or_defer(v, env) for k, v in node.kwargs.items()}
-            try:
+            # Only defer AST nodes for functions that explicitly handle them via make_row_fn.
+            # All other stdlib functions get fully-evaluated args.
+            defers = getattr(fn, '_accepts_deferred', False)
+            if defers:
+                args = pre + [self._eval_or_defer(a, env) for a in node.args]
+                kwargs = {k: self._eval_or_defer(v, env) for k, v in node.kwargs.items()}
+            else:
+                def _unwrap_ok(v):
+                    return v.value if isinstance(v, Ok) else v
+                args = pre + [_unwrap_ok(self.eval(a, env)) for a in node.args]
+                kwargs = {k: _unwrap_ok(self.eval(v, env)) for k, v in node.kwargs.items()}
+            if _check_accepts_interp(fn):
                 result = fn(*args, **kwargs, _block=node.block, _env=env, _interp=self)
-            except TypeError:
+            else:
                 result = fn(*args, **kwargs)
             # Unwrap nested Ok(Ok(...))
             while isinstance(result, Ok) and isinstance(result.value, Ok):
@@ -343,41 +382,82 @@ class Interpreter:
             raise PepError(f"'{self._call_name(node.func)}' is not callable (got {type(fn).__name__})")
 
     def _call_pm_function(self, fn: PmFunction, args: list, kwargs: dict, block, env: Env) -> Any:
-        if len(args) != len(fn.params):
-            raise PepError(f"expected {len(fn.params)} args, got {len(args)}")
-        bindings = dict(zip(fn.params, args))
-        call_env = fn.closure.extend(bindings)
-        result = self.eval(fn.body, call_env)
-        if not isinstance(result, (Ok, Err)):
-            result = Ok(result)
+        # Trampoline: loop on tail calls to avoid growing the Python call stack
+        while True:
+            if len(args) != len(fn.params):
+                raise PepError(f"expected {len(fn.params)} args, got {len(args)}")
+            bindings = dict(zip(fn.params, args))
+            call_env = fn.closure.extend(bindings)
+            result = self.eval_tail(fn.body, call_env)
+            if isinstance(result, _TailCall):
+                fn, args = result.fn, result.args
+                continue
+            if not isinstance(result, (Ok, Err)):
+                result = Ok(result)
+            return result
+
+    def eval_tail(self, node, env: Env) -> Any:
+        """Like eval, but returns _TailCall instead of recursing for tail-position PmFunction calls."""
+        match node:
+            case Call():
+                return self.eval_call(node, None, env, tail=True)
+            case Match():
+                return self.eval_match_tail(node, env)
+            case Block():
+                return self.eval_block_tail(node, env)
+            case _:
+                return self.eval(node, env)
+
+    def eval_match_tail(self, node: Match, env: Env) -> Any:
+        subject = self.eval(node.subject, env)
+        if isinstance(subject, Ok):
+            subject = subject.value
+        for arm in node.arms:
+            matched, bindings = self._match_pattern(arm.pattern, subject, env)
+            if matched:
+                arm_env = env.extend(bindings)
+                return self.eval_tail(arm.body, arm_env)
+        return Err("no match")
+
+    def eval_block_tail(self, node: Block, env: Env) -> Any:
+        result = None
+        for i, stmt in enumerate(node.stmts):
+            if i == len(node.stmts) - 1:
+                result = self.eval_tail(stmt, env)
+            else:
+                result = self.eval(stmt, env)
         return result
 
     # --- Match ---
 
     def eval_match(self, node: Match, env: Env) -> Any:
         subject = self.eval(node.subject, env)
+        if isinstance(subject, Ok):
+            subject = subject.value
 
         for arm in node.arms:
-            matched, bindings = self._match_pattern(arm.pattern, subject)
+            matched, bindings = self._match_pattern(arm.pattern, subject, env)
             if matched:
                 arm_env = env.extend(bindings)
                 return self.eval(arm.body, arm_env)
 
         return Err("no match")
 
-    def _match_pattern(self, pattern, value) -> tuple[bool, dict]:
+    def _match_pattern(self, pattern, value, env: Env) -> tuple[bool, dict]:
         match pattern:
             case PatWildcard():
                 return True, {}
 
             case PatComparison(op=op, value=v):
+                # v may be a literal or an Ident (variable pattern)
+                rhs = self.eval(v, env) if isinstance(v, Ident) else v
                 match op:
-                    case ">":  result = value > v
-                    case "<":  result = value < v
-                    case ">=": result = value >= v
-                    case "<=": result = value <= v
-                    case "==": result = value == v
-                    case "!=": result = value != v
+                    case ">":  result = value > rhs
+                    case "<":  result = value < rhs
+                    case ">=": result = value >= rhs
+                    case "<=": result = value <= rhs
+                    case "==": result = value == rhs
+                    case "!=": result = value != rhs
                     case _: result = False
                 return result, {}
 
@@ -396,7 +476,7 @@ class Interpreter:
                     return False, {}
                 all_bindings = {}
                 for pat, val in zip(pats, value):
-                    ok, bindings = self._match_pattern(pat, val)
+                    ok, bindings = self._match_pattern(pat, val, env)
                     if not ok:
                         return False, {}
                     all_bindings.update(bindings)

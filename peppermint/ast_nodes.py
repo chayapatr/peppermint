@@ -19,7 +19,7 @@ NO_LOC = Loc(0, 0)
 @dataclass
 class PatComparison:
     op: str        # >, <, >=, <=, ==, !=
-    value: Any     # int | float | str
+    value: Any     # int | float | str | Expr (variable)
     loc: Loc = field(default_factory=lambda: NO_LOC)
 
 @dataclass

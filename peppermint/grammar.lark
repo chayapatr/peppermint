@@ -19,20 +19,23 @@ assign: NAME "=" expr
 
 use_decl: "use" (NAME | ESCAPED_STRING) ("as" NAME)?
 
-ns_decl: "ns" NAME "{" _NL* (assign _NL*)* "}"
+ns_decl: "ns" NAME "{" (_NL | assign)* "}"
 
 // Expression hierarchy — lowest precedence at top
 ?expr: lambda_expr
 
 ARROW: "->"
 
+// Lambda params: trailing NL absorbed after each NAME, before ")" or ","
+_lambda_params: NAME (_NL* "," _NL* NAME)*
+
 ?lambda_expr: pipe_expr
-            | NAME ARROW expr                                                    -> lambda_expr
-            | "(" _NL* NAME ("," _NL* NAME)* _NL* ")" ARROW expr               -> lambda_expr
-            | "(" _NL* ")" ARROW expr                                           -> lambda_expr_noargs
-            | NAME ARROW "(" _NL* paren_expr _NL* ")"                          -> lambda_body
-            | "(" _NL* NAME ("," _NL* NAME)* _NL* ")" ARROW "(" _NL* paren_expr _NL* ")" -> lambda_body
-            | "(" _NL* ")" ARROW "(" _NL* paren_expr _NL* ")"                  -> lambda_body_noargs
+            | NAME ARROW expr                                                         -> lambda_expr
+            | "(" _NL* _lambda_params _NL* ")" ARROW expr                            -> lambda_expr
+            | "(" _NL* ")" ARROW expr                                                 -> lambda_expr_noargs
+            | NAME ARROW "(" _NL* paren_expr _NL* ")"                               -> lambda_body
+            | "(" _NL* _lambda_params _NL* ")" ARROW "(" _NL* paren_expr _NL* ")"   -> lambda_body
+            | "(" _NL* ")" ARROW "(" _NL* paren_expr _NL* ")"                       -> lambda_body_noargs
 
 ?pipe_expr: cmp_expr
           | pipe_expr "|>" pipe_step
@@ -87,7 +90,7 @@ MOD:   "%"
      | "false"                                           -> false_lit
      | "none"                                            -> none_lit
      | "(" _NL* expr _NL* ")"
-     | "(" _NL* expr (_NL* "," _NL* expr)+ _NL* ")"    -> tuple_lit
+     | tuple_lit
      | "(" _NL* expr (_NL+ expr)+ _NL* ")"              -> seq_expr
      | list_lit
      | obj_lit
@@ -103,9 +106,9 @@ spread_expr: "..." postfix
 
 range_expr: INT ".." INT
 
-list_lit: "[" _NL* (expr (_NL* "," _NL* expr)*)? ","? _NL* "]"
+list_lit: "[" _NL* (expr (_NL* "," _NL* expr)* ","?)? _NL* "]"
 
-obj_lit: "{" _NL* (obj_entry (_NL* "," _NL* obj_entry)*)? ","? _NL* "}"
+obj_lit: "{" _NL* (obj_entry ("," _NL* obj_entry)* ","?)? _NL* "}"
 obj_entry: "..." postfix  -> obj_spread
          | NAME ":" expr  -> obj_field
          | NAME            -> obj_shorthand
@@ -113,26 +116,29 @@ obj_entry: "..." postfix  -> obj_spread
 // Block: sub-pipe steps inside { }
 block: "{" _NL* ("|>" pipe_step _NL*)+ "}"
 
-arglist: arg (_NL* "," _NL* arg)* ","?
+arglist: arg ("," _NL* arg)* ","?
 arg: NAME ":" _NL* expr  -> kwarg
    | expr                 -> posarg
 
 // Match — newlines allowed freely inside ( )
-match_expr: "match" "(" _NL* expr _NL* "," _NL* match_arm (_NL* "," _NL* match_arm)* _NL* ","? _NL* ")"
+match_expr: "match" "(" _NL* expr _NL* "," _NL* match_arm ("," _NL* match_arm)* ","? _NL* ")"
 match_arm: pattern ":" expr
 
-pattern: ">"  literal  -> pat_gt
-       | "<"  literal  -> pat_lt
-       | ">=" literal  -> pat_gte
-       | "<=" literal  -> pat_lte
-       | "==" literal  -> pat_eq
-       | "!=" literal  -> pat_neq
+pattern: ">"  pat_val  -> pat_gt
+       | "<"  pat_val  -> pat_lt
+       | ">=" pat_val  -> pat_gte
+       | "<=" pat_val  -> pat_lte
+       | "==" pat_val  -> pat_eq
+       | "!=" pat_val  -> pat_neq
        | "Ok"  "(" NAME ")"                          -> pat_ok
        | "Err" "(" NAME ")"                          -> pat_err
-       | "(" pattern (_NL* "," _NL* pattern)+ ")"   -> pat_tuple
+       | "(" pattern ("," _NL* pattern)+ ")"         -> pat_tuple
        | "_"                                         -> pat_wildcard
 
+pat_val: INT | FLOAT | ESCAPED_STRING | NAME
 literal: INT | FLOAT | ESCAPED_STRING
+
+tuple_lit.-1: "(" _NL* expr ("," _NL* expr)+ _NL* ")"
 
 // _NL: silent newline/semicolon — ignored inside brackets
 _NL: NEWLINE | ";"

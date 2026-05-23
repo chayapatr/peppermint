@@ -18,6 +18,15 @@ def sqrt(x):
 def round_(x):
     return round(x)
 
+def floor(x):
+    return math.floor(x)
+
+def ceil(x):
+    return math.ceil(x)
+
+def abs_(x):
+    return abs(x)
+
 
 def build_math_env() -> dict:
     return wrap_lib({
@@ -26,4 +35,7 @@ def build_math_env() -> dict:
         "std":   std,
         "sqrt":  sqrt,
         "round": round_,
+        "floor": floor,
+        "ceil":  ceil,
+        "abs":   abs_,
     })

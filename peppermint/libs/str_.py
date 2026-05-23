@@ -38,6 +38,18 @@ def match(s, pattern):
 def slice_(s, start=0, end=None):
     return str(s)[int(start):int(end) if end is not None else None]
 
+def at(s, i):
+    return str(s)[int(i)]
+
+def ord_(c):
+    return ord(str(c)[0])
+
+def char(n):
+    return chr(int(n))
+
+def chars(s):
+    return list(str(s))
+
 
 def build_str_env() -> dict:
     return wrap_lib({
@@ -53,4 +65,8 @@ def build_str_env() -> dict:
         "length":      length,
         "match":       match,
         "slice":       slice_,
+        "at":          at,
+        "ord":         ord_,
+        "char":        char,
+        "chars":       chars,
     })

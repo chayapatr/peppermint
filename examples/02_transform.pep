@@ -9,7 +9,11 @@ clean = data -> (
 engineer = data -> (
   data
     |> add(income_per_year: it.income)
-    |> add(seniority: match(it.age, > 50: "senior", > 35: "mid", _: "junior"))
+    |> add(seniority:
+      match(it.age,
+        > 50: "senior",
+        > 35: "mid",
+        _: "junior"))
     |> drop("score")
 )
 
