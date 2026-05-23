@@ -1,5 +1,5 @@
 // Peppermint grammar
-// Newlines inside ( ) are always ignored — JS-style.
+// Newlines inside ( ) [ ] { } are always ignored — JS-style.
 // Newlines at statement level are significant (they terminate statements).
 
 program: (_NEWLINE | _SEMI | statement)*
@@ -19,7 +19,7 @@ assign: NAME "=" expr
 
 use_decl: "use" (NAME | ESCAPED_STRING) ("as" NAME)?
 
-ns_decl: "ns" NAME "{" _NEWLINE* (assign _NEWLINE*)* "}"
+ns_decl: "ns" NAME "{" _NL* (assign _NL*)* "}"
 
 // Expression hierarchy — lowest precedence at top
 ?expr: lambda_expr
@@ -27,12 +27,12 @@ ns_decl: "ns" NAME "{" _NEWLINE* (assign _NEWLINE*)* "}"
 ARROW: "->"
 
 ?lambda_expr: pipe_expr
-            | NAME ARROW expr                      -> lambda_expr
-            | "(" NL* NAME ("," NL* NAME)* NL* ")" ARROW expr -> lambda_expr
-            | "(" NL* ")" ARROW expr               -> lambda_expr_noargs
-            | NAME ARROW "(" NL* paren_expr NL* ")" -> lambda_body
-            | "(" NL* NAME ("," NL* NAME)* NL* ")" ARROW "(" NL* paren_expr NL* ")" -> lambda_body
-            | "(" NL* ")" ARROW "(" NL* paren_expr NL* ")"  -> lambda_body_noargs
+            | NAME ARROW expr                                                    -> lambda_expr
+            | "(" _NL* NAME ("," _NL* NAME)* _NL* ")" ARROW expr               -> lambda_expr
+            | "(" _NL* ")" ARROW expr                                           -> lambda_expr_noargs
+            | NAME ARROW "(" _NL* paren_expr _NL* ")"                          -> lambda_body
+            | "(" _NL* NAME ("," _NL* NAME)* _NL* ")" ARROW "(" _NL* paren_expr _NL* ")" -> lambda_body
+            | "(" _NL* ")" ARROW "(" _NL* paren_expr _NL* ")"                  -> lambda_body_noargs
 
 ?pipe_expr: cmp_expr
           | pipe_expr "|>" pipe_step
@@ -52,10 +52,13 @@ QUIET: "quiet"
          | add_expr PLUS  mul_expr -> binop
          | add_expr MINUS mul_expr -> binop
 
-?mul_expr: postfix
-         | mul_expr STAR  postfix  -> binop
-         | mul_expr SLASH postfix  -> binop
-         | mul_expr MOD   postfix  -> binop
+?mul_expr: unary_expr
+         | mul_expr STAR  unary_expr  -> binop
+         | mul_expr SLASH unary_expr  -> binop
+         | mul_expr MOD   unary_expr  -> binop
+
+?unary_expr: postfix
+           | MINUS postfix  -> neg
 
 GT:    ">"
 LT:    "<"
@@ -71,21 +74,21 @@ MOD:   "%"
 
 // Postfix: field access and calls, left-associative
 ?postfix: atom
-        | postfix "." NAME              -> field_access
-        | postfix "(" arglist? ")"            -> call_expr
-        | postfix "(" arglist? ")" block      -> call_with_block
+        | postfix "." NAME                         -> field_access
+        | postfix "(" _NL* arglist? _NL* ")"       -> call_expr
+        | postfix "(" _NL* arglist? _NL* ")" block -> call_with_block
 
 // Atom: base expressions
-?atom: NAME                        -> ident
-     | INT                         -> int_lit
-     | FLOAT                       -> float_lit
-     | ESCAPED_STRING              -> str_lit
-     | "true"                      -> true_lit
-     | "false"                     -> false_lit
-     | "none"                      -> none_lit
-     | "(" NL* expr NL* ")"
-     | "(" NL* expr (NL* "," NL* expr)+ NL* ")"    -> tuple_lit
-     | "(" NL* expr (NL+ expr)+ NL* ")"             -> seq_expr
+?atom: NAME                                              -> ident
+     | INT                                               -> int_lit
+     | FLOAT                                             -> float_lit
+     | ESCAPED_STRING                                    -> str_lit
+     | "true"                                            -> true_lit
+     | "false"                                           -> false_lit
+     | "none"                                            -> none_lit
+     | "(" _NL* expr _NL* ")"
+     | "(" _NL* expr (_NL* "," _NL* expr)+ _NL* ")"    -> tuple_lit
+     | "(" _NL* expr (_NL+ expr)+ _NL* ")"              -> seq_expr
      | list_lit
      | obj_lit
      | match_expr
@@ -93,28 +96,29 @@ MOD:   "%"
      | spread_expr
 
 // paren_expr: sequence of exprs separated by NL/; with optional pipe continuations
-paren_expr: paren_stmt (NL+ paren_stmt)* -> paren_seq
-paren_stmt: expr (NL* "|>" pipe_step)*   -> paren_pipe
+paren_expr: paren_stmt (_NL+ paren_stmt)* -> paren_seq
+paren_stmt: expr (_NL* "|>" pipe_step)*   -> paren_pipe
 
 spread_expr: "..." postfix
 
 range_expr: INT ".." INT
 
-list_lit: "[" NL* (expr (NL* "," NL* expr)*)? ","? NL* "]"
+list_lit: "[" _NL* (expr (_NL* "," _NL* expr)*)? ","? _NL* "]"
 
-obj_lit: "{" NL* (obj_entry (NL* "," NL* obj_entry)*)? ","? NL* "}"
+obj_lit: "{" _NL* (obj_entry (_NL* "," _NL* obj_entry)*)? ","? _NL* "}"
 obj_entry: "..." postfix  -> obj_spread
          | NAME ":" expr  -> obj_field
+         | NAME            -> obj_shorthand
 
 // Block: sub-pipe steps inside { }
-block: "{" NL* ("|>" pipe_step NL*)+ "}"
+block: "{" _NL* ("|>" pipe_step _NL*)+ "}"
 
-arglist: arg (NL* "," NL* arg)* ","?
-arg: NAME ":" NL* expr  -> kwarg
-   | expr                -> posarg
+arglist: arg (_NL* "," _NL* arg)* ","?
+arg: NAME ":" _NL* expr  -> kwarg
+   | expr                 -> posarg
 
 // Match — newlines allowed freely inside ( )
-match_expr: "match" "(" NL* expr NL* "," NL* match_arm (NL* "," NL* match_arm)* NL* ","? NL* ")"
+match_expr: "match" "(" _NL* expr _NL* "," _NL* match_arm (_NL* "," _NL* match_arm)* _NL* ","? _NL* ")"
 match_arm: pattern ":" expr
 
 pattern: ">"  literal  -> pat_gt
@@ -123,15 +127,15 @@ pattern: ">"  literal  -> pat_gt
        | "<=" literal  -> pat_lte
        | "==" literal  -> pat_eq
        | "!=" literal  -> pat_neq
-       | "Ok"  "(" NAME ")"             -> pat_ok
-       | "Err" "(" NAME ")"             -> pat_err
-       | "(" pattern (NL* "," NL* pattern)+ ")" -> pat_tuple
-       | "_"                            -> pat_wildcard
+       | "Ok"  "(" NAME ")"                          -> pat_ok
+       | "Err" "(" NAME ")"                          -> pat_err
+       | "(" pattern (_NL* "," _NL* pattern)+ ")"   -> pat_tuple
+       | "_"                                         -> pat_wildcard
 
 literal: INT | FLOAT | ESCAPED_STRING
 
-// NL: newline or semicolon, ignored inside ( ) — aliased for readability
-NL: NEWLINE | ";"
+// _NL: silent newline/semicolon — ignored inside brackets
+_NL: NEWLINE | ";"
 
 // Terminals
 NAME: /(?!(true|false|none|ns|use|as|quiet)\b)[a-zA-Z_][a-zA-Z0-9_]*/

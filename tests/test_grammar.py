@@ -220,10 +220,45 @@ def test_use_as():          ok('use "./transforms" as t')
 def test_use_name_as():     ok("use ml as myml")
 
 
+# --- Unary minus ---
+
+def test_unary_minus_int():     ok("-1")
+def test_unary_minus_float():   ok("-3.14")
+def test_unary_minus_expr():    ok("-(x + 1)")
+def test_unary_minus_in_binop():ok("0 - -1")
+def test_unary_minus_in_call(): ok("f(-1)")
+
+
 # --- Modulo ---
 
 def test_modulo():          ok("x % 3")
 def test_modulo_expr():     ok("it.age % 2 == 0")
+
+
+# --- Aggregation ---
+
+def test_agg_single():      ok('data |> agg(total: sum(it.income))')
+def test_agg_multi():       ok('data |> agg(total: sum(it.income), avg: mean(it.income), n: count())')
+def test_agg_after_group():
+    ok("""
+load("data.csv")
+|> group(by: "region") {
+    |> agg(total: sum(it.income), n: count())
+}
+""")
+
+def test_sum_call():        ok("sum(it.income)")
+def test_mean_call():       ok("mean(it.value)")
+def test_count_call():      ok("count()")
+def test_min_call():        ok("min(it.age)")
+def test_max_call():        ok("max(it.score)")
+
+
+# --- Object shorthand ---
+
+def test_obj_shorthand_single():    ok("{ x }")
+def test_obj_shorthand_multi():     ok("{ x, y, z }")
+def test_obj_shorthand_mixed():     ok("{ x, name: \"alice\", y }")
 
 
 # --- Arrow (lambda) ---

@@ -342,6 +342,69 @@ clean = data -> (
     assert isinstance(lam.body, Pipe)
 
 
+# --- Aggregation ---
+
+def test_agg_parses():
+    node = expr('data |> agg(total: sum(it.income), n: count())')
+    assert isinstance(node, Pipe)
+    agg_step = node.steps[1]
+    assert isinstance(agg_step, PipeStep)
+    call = agg_step.expr
+    assert isinstance(call, Call)
+    assert "total" in call.kwargs
+    assert "n" in call.kwargs
+
+def test_sum_parses():
+    node = expr("sum(it.income)")
+    assert isinstance(node, Call)
+    assert isinstance(node.func, Ident)
+    assert node.func.name == "sum"
+
+def test_count_parses():
+    node = expr("count()")
+    assert isinstance(node, Call)
+    assert node.func.name == "count"
+    assert node.args == []
+    assert node.kwargs == {}
+
+def test_agg_after_group_parses():
+    prog = parse("""
+data
+|> group(by: "region") {
+    |> agg(total: sum(it.income), n: count())
+}
+""")
+    pipe = prog.body[0]
+    assert isinstance(pipe, Pipe)
+    group_call = pipe.steps[1].expr
+    assert group_call.block is not None
+    agg_step = group_call.block[0]
+    assert isinstance(agg_step, PipeStep)
+    assert isinstance(agg_step.expr, Call)
+
+
+# --- Object shorthand ---
+
+def test_obj_shorthand_single():
+    node = expr("{ x }")
+    assert isinstance(node, ObjLit)
+    assert len(node.entries) == 1
+    assert isinstance(node.entries[0], ObjShorthand)
+    assert node.entries[0].key == "x"
+
+def test_obj_shorthand_multi():
+    node = expr("{ x, y, z }")
+    assert isinstance(node, ObjLit)
+    assert all(isinstance(e, ObjShorthand) for e in node.entries)
+    assert [e.key for e in node.entries] == ["x", "y", "z"]
+
+def test_obj_shorthand_mixed():
+    node = expr('{ x, name: "alice" }')
+    assert isinstance(node, ObjLit)
+    assert isinstance(node.entries[0], ObjShorthand)
+    assert isinstance(node.entries[1], ObjField)
+
+
 # --- Full spec example ---
 
 def test_full_example_parses():

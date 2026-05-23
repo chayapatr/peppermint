@@ -1,0 +1,148 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Peppermint",
+  "scopeName": "source.pep",
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#number" },
+    { "include": "#keyword" },
+    { "include": "#constant" },
+    { "include": "#operator" },
+    { "include": "#pipe" },
+    { "include": "#spread" },
+    { "include": "#range" },
+    { "include": "#lambda" },
+    { "include": "#match" },
+    { "include": "#result" },
+    { "include": "#namespace" },
+    { "include": "#field-access" },
+    { "include": "#call" },
+    { "include": "#identifier" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.pep",
+      "match": "#[^\n]*"
+    },
+    "string": {
+      "name": "string.quoted.double.pep",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.pep",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "number": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.pep",
+          "match": "\\b[0-9]+\\.[0-9]+\\b"
+        },
+        {
+          "name": "constant.numeric.integer.pep",
+          "match": "\\b[0-9]+\\b"
+        }
+      ]
+    },
+    "keyword": {
+      "patterns": [
+        {
+          "name": "keyword.control.pep",
+          "match": "\\b(match|use|as|ns)\\b"
+        },
+        {
+          "name": "keyword.other.quiet.pep",
+          "match": "\\bquiet\\b"
+        }
+      ]
+    },
+    "constant": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.pep",
+          "match": "\\b(true|false)\\b"
+        },
+        {
+          "name": "constant.language.null.pep",
+          "match": "\\bnone\\b"
+        },
+        {
+          "name": "variable.language.it.pep",
+          "match": "\\bit\\b"
+        }
+      ]
+    },
+    "operator": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.pep",
+          "match": ">=|<=|==|!=|>|<"
+        },
+        {
+          "name": "keyword.operator.arithmetic.pep",
+          "match": "\\+|-|\\*|/|%"
+        },
+        {
+          "name": "keyword.operator.assignment.pep",
+          "match": "(?<!=)=(?!=|>)"
+        }
+      ]
+    },
+    "pipe": {
+      "name": "keyword.operator.pipe.pep",
+      "match": "\\|>"
+    },
+    "spread": {
+      "name": "keyword.operator.spread.pep",
+      "match": "\\.\\.\\."
+    },
+    "range": {
+      "name": "keyword.operator.range.pep",
+      "match": "\\.\\."
+    },
+    "lambda": {
+      "name": "keyword.operator.lambda.pep",
+      "match": "->"
+    },
+    "match": {
+      "name": "keyword.control.match.pep",
+      "match": "\\bmatch\\b"
+    },
+    "result": {
+      "patterns": [
+        {
+          "name": "support.class.ok.pep",
+          "match": "\\bOk\\b"
+        },
+        {
+          "name": "support.class.err.pep",
+          "match": "\\bErr\\b"
+        },
+        {
+          "name": "variable.language.wildcard.pep",
+          "match": "\\b_\\b"
+        }
+      ]
+    },
+    "namespace": {
+      "name": "entity.name.namespace.pep",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\.)"
+    },
+    "field-access": {
+      "name": "variable.other.member.pep",
+      "match": "(?<=\\.)([a-zA-Z_][a-zA-Z0-9_]*)"
+    },
+    "call": {
+      "name": "entity.name.function.pep",
+      "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\\s*\\()"
+    },
+    "identifier": {
+      "name": "variable.other.pep",
+      "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+    }
+  }
+}

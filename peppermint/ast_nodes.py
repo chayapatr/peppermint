@@ -81,6 +81,11 @@ class FieldAccess:
     loc: Loc = field(default_factory=lambda: NO_LOC)
 
 @dataclass
+class Neg:
+    operand: Any   # Expr
+    loc: Loc = field(default_factory=lambda: NO_LOC)
+
+@dataclass
 class BinOp:
     op: str        # +, -, *, /, >, <, >=, <=, ==, !=
     left: Any      # Expr
@@ -141,6 +146,11 @@ class ObjSpread:
     loc: Loc = field(default_factory=lambda: NO_LOC)
 
 @dataclass
+class ObjShorthand:
+    key: str       # { x } = { x: x }
+    loc: Loc = field(default_factory=lambda: NO_LOC)
+
+@dataclass
 class ObjLit:
     entries: list  # list[ObjField | ObjSpread]
     loc: Loc = field(default_factory=lambda: NO_LOC)
@@ -164,6 +174,11 @@ class Range:
 @dataclass
 class Block:
     stmts: list   # list[Expr] — evaluates each, returns last
+    loc: Loc = field(default_factory=lambda: NO_LOC)
+
+@dataclass
+class Literal:
+    value: Any    # already-evaluated runtime value, passes through eval unchanged
     loc: Loc = field(default_factory=lambda: NO_LOC)
 
 # --- Statements ---

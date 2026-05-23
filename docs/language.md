@@ -29,6 +29,8 @@ load("data.csv")
   |> print()
 ```
 
+Pipes are railway-oriented — every pipe produces `Ok(value)` or `Err(message)`. If any step fails, all downstream steps are skipped automatically and the error propagates to the end.
+
 Each step prints a summary automatically:
 
 ```
@@ -115,9 +117,11 @@ load("data.csv")
 
 ## Result and error handling
 
-Every pipe returns `Ok(value)` or `Err(message)`. If a step fails, the rest of the pipe is skipped automatically.
+Every pipe returns `Ok(value)` or `Err(message)`. Pure functions inside the pipe return plain values — the pipe wraps them in `Ok`. Only IO functions (`load`, `save`) produce `Ok`/`Err` directly.
 
-Handle at the end with `match`:
+Any exception inside a pipe step becomes `Err` automatically — you never get a crash mid-pipe.
+
+Handle the result with `match`:
 
 ```
 result = load("data.csv")
@@ -128,6 +132,8 @@ match(result,
   Err(msg):  print(msg)
 )
 ```
+
+`match` is the only way back to the happy track — errors can't be silently ignored.
 
 ---
 
@@ -169,8 +175,17 @@ Python files are loaded via the bridge — functions receive and return plain Py
 [1, 2, 3]                          # list
 { name: "alice", age: 25 }         # object
 { ...existing, score: 42 }         # object spread
+{ name, age }                      # object shorthand — same as { name: name, age: age }
 (1, "hello", true)                 # tuple
 1..10                              # range
+```
+
+A list of objects (`[{ ... }, { ... }]`) automatically becomes a typed `List<Object>`, the same type returned by `load()`. This means you can construct inline datasets and pass them directly to any list operation:
+
+```
+[{ name: "alice", age: 25 }, { name: "bob", age: 17 }]
+  |> filter(it.age >= 18)
+  |> print()
 ```
 
 ---
@@ -205,6 +220,12 @@ Python files are loaded via the bridge — functions receive and return plain Py
 | `sort(by, dir)` | Sort rows |
 | `join(other, on)` | Join two lists on a shared key field |
 | `group(by) { }` | Group by field, run sub-pipe per group |
+| `agg(field: fn, ...)` | Aggregate into a single-row summary |
+| `sum(expr)` | Sum of field across rows — use inside `agg` |
+| `mean(expr)` | Mean of field across rows — use inside `agg` |
+| `count()` | Row count — use inside `agg` |
+| `min(expr)` | Minimum value — use inside `agg` |
+| `max(expr)` | Maximum value — use inside `agg` |
 | `print(value)` | Print and pass through |
 
 ### `use math`
@@ -253,6 +274,31 @@ Python files are loaded via the bridge — functions receive and return plain Py
 | `str.length(s)` | String length |
 | `str.match(s, pattern)` | True if regex matches |
 | `str.slice(s, start, end?)` | Substring by index |
+
+---
+
+## Aggregation
+
+`agg` collapses a list into a single-row summary. Pass any combination of `sum`, `mean`, `count`, `min`, `max`:
+
+```
+load("sales.csv")
+  |> agg(total: sum(it.amount), avg: mean(it.amount), n: count())
+  |> print()
+```
+
+Combine with `group` to aggregate per group:
+
+```
+load("sales.csv")
+  |> group(by: "region") {
+      |> agg(total: sum(it.amount), n: count())
+  }
+  |> sort(by: "total", dir: "desc")
+  |> print()
+```
+
+`group` runs the block sub-pipe independently on each group, then merges results back with the group key attached.
 
 ---
 

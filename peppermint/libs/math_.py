@@ -1,57 +1,29 @@
-"""
-Peppermint math stdlib — pure Python, uses bridge for type conversion.
-"""
 import math
 import statistics
-from ..bridge import ok, err, to_python, from_python
+from ..bridge import wrap_lib
 
 
-def log(x, **_):
-    try:
-        return ok(math.log(to_python(x)))
-    except Exception as e:
-        return err(str(e))
+def log(x):
+    return math.log(x)
 
+def mean(values):
+    return statistics.mean(values)
 
-def mean(values, **_):
-    try:
-        vals = to_python(values)
-        if not hasattr(vals, "__iter__"):
-            return err("mean() requires a list")
-        return ok(statistics.mean(vals))
-    except Exception as e:
-        return err(str(e))
+def std(values):
+    return statistics.stdev(values)
 
+def sqrt(x):
+    return math.sqrt(x)
 
-def std(values, **_):
-    try:
-        vals = to_python(values)
-        if not hasattr(vals, "__iter__"):
-            return err("std() requires a list")
-        return ok(statistics.stdev(vals))
-    except Exception as e:
-        return err(str(e))
-
-
-def sqrt(x, **_):
-    try:
-        return ok(math.sqrt(to_python(x)))
-    except Exception as e:
-        return err(str(e))
-
-
-def round_(x, **_):
-    try:
-        return ok(round(to_python(x)))
-    except Exception as e:
-        return err(str(e))
+def round_(x):
+    return round(x)
 
 
 def build_math_env() -> dict:
-    return {
+    return wrap_lib({
         "log":   log,
         "mean":  mean,
         "std":   std,
         "sqrt":  sqrt,
         "round": round_,
-    }
+    })

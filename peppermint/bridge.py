@@ -141,22 +141,19 @@ def load_python_file(path: str, alias: str | None = None) -> dict:
     return fns
 
 
-def _wrap(fn: Callable) -> Callable:
+def wrap(fn: Callable) -> Callable:
     """
-    Wrap a plain Python function so that:
-    - Its first arg (the piped value) is converted from Peppermint to Python
-    - Its return value is converted from Python to Peppermint
-    - Exceptions become Err
+    Wrap a plain Python function for use in Peppermint:
+    - All args are converted from Peppermint values to plain Python
+    - Return value is wrapped in Ok
+    - Any raised exception becomes Err(message)
     """
     import functools
 
     @functools.wraps(fn)
     def wrapper(*args, _interp=None, _env=None, _block=None, **kwargs):
         try:
-            # Convert first positional arg (piped value) if present
-            converted = []
-            for i, arg in enumerate(args):
-                converted.append(to_python(arg) if i == 0 else arg)
+            converted = [to_python(a) for a in args]
             result = fn(*converted, **kwargs)
             return from_python(result)
         except Exception as e:
@@ -164,3 +161,10 @@ def _wrap(fn: Callable) -> Callable:
             return Err(str(e))
 
     return wrapper
+
+def wrap_lib(fns: dict) -> dict:
+    """Wrap a dict of plain Python functions for use in Peppermint."""
+    return {name: wrap(fn) for name, fn in fns.items()}
+
+# Keep _wrap as internal alias used by load_python_file
+_wrap = wrap

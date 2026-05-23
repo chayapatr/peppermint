@@ -1,0 +1,26 @@
+{
+  "name": "vscode-peppermint",
+  "displayName": "Peppermint",
+  "description": "Syntax highlighting for Peppermint (.pep) files",
+  "version": "0.1.0",
+  "publisher": "peppermint",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "peppermint",
+        "aliases": ["Peppermint", "pep"],
+        "extensions": [".pep"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "peppermint",
+        "scopeName": "source.pep",
+        "path": "./syntaxes/peppermint.tmLanguage.json"
+      }
+    ]
+  }
+}

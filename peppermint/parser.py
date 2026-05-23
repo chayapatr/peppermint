@@ -35,7 +35,18 @@ class PeppermintTransformer(Transformer):
 
     def program(self, items):
         stmts = [i for i in items if i is not None]
-        # Merge cont_pipe nodes onto the previous statement
+        # Pass 1: merge TupleLit/single-paren back into calls when earley splits them
+        # e.g. "f(a, b)" after a prior statement gets parsed as Ident(f) + TupleLit(a,b)
+        coalesced = []
+        for node in stmts:
+            if coalesced and isinstance(node, TupleLit) and self._is_callable(coalesced[-1]):
+                func = coalesced.pop()
+                coalesced.append(Call(func=func, args=node.items, kwargs={}, block=None))
+            else:
+                coalesced.append(node)
+        stmts = coalesced
+
+        # Pass 2: merge cont_pipe nodes onto the previous statement
         merged = []
         for node in stmts:
             if isinstance(node, _ContPipe):
@@ -50,10 +61,12 @@ class PeppermintTransformer(Transformer):
                             prev.value = Pipe(steps=[prev.value] + node.steps)
                     else:
                         merged[-1] = Pipe(steps=[prev] + node.steps)
-                # if no previous, discard (shouldn't happen in valid programs)
             else:
                 merged.append(node)
         return Program(body=merged)
+
+    def _is_callable(self, node) -> bool:
+        return isinstance(node, (Ident, FieldAccess, Call))
 
     def statement(self, items):
         return items[0]
@@ -73,14 +86,12 @@ class PeppermintTransformer(Transformer):
         return Pipe(steps=[source] + extra)
 
     def paren_seq(self, items):
-        exprs = [i for i in items if not (isinstance(i, Token) and i.type in ("NL", "NEWLINE"))]
-        if len(exprs) == 1:
-            return exprs[0]
-        return Block(stmts=exprs)
+        if len(items) == 1:
+            return items[0]
+        return Block(stmts=items)
 
     def seq_expr(self, items):
-        exprs = [i for i in items if not (isinstance(i, Token) and i.type in ("NL", "NEWLINE"))]
-        return Block(stmts=exprs)
+        return Block(stmts=items)
 
     # --- Statements ---
 
@@ -120,7 +131,6 @@ class PeppermintTransformer(Transformer):
     def str_lit(self, items):
         tok = items[0]
         s = str(tok)
-        # strip surrounding quotes and unescape
         value = s[1:-1].encode("raw_unicode_escape").decode("unicode_escape")
         return StrLit(value=value, loc=_tok_loc(tok))
 
@@ -152,6 +162,10 @@ class PeppermintTransformer(Transformer):
     def obj_spread(self, items):
         return ObjSpread(obj=items[0])
 
+    def obj_shorthand(self, items):
+        tok = items[0]
+        return ObjShorthand(key=str(tok), loc=_tok_loc(tok))
+
     def tuple_lit(self, items):
         return TupleLit(items=list(items))
 
@@ -161,6 +175,11 @@ class PeppermintTransformer(Transformer):
 
     def spread_expr(self, items):
         return Spread(obj=items[0])
+
+    # --- Unary ops ---
+
+    def neg(self, items):
+        return Neg(operand=items[-1])
 
     # --- Binary ops ---
 
@@ -196,7 +215,6 @@ class PeppermintTransformer(Transformer):
         kwargs = {}
         for item in items:
             if isinstance(item, list):
-                # arglist returns a flat list of posarg/kwarg results
                 for sub in item:
                     if isinstance(sub, tuple):
                         kwargs[sub[0]] = sub[1]
@@ -209,14 +227,13 @@ class PeppermintTransformer(Transformer):
         return args, kwargs
 
     def arglist(self, items):
-        return [i for i in items if not isinstance(i, Token) or i.type not in ("NL", "NEWLINE", "_NEWLINE")]
+        return list(items)
 
     def posarg(self, items):
         return items[0]
 
     def kwarg(self, items):
-        non_nl = [i for i in items if not (isinstance(i, Token) and i.type in ("NL", "NEWLINE"))]
-        key_tok, value = non_nl[0], non_nl[1]
+        key_tok, value = items[0], items[1]
         return (str(key_tok), value)
 
     # --- Block (sub-pipe for group) ---
@@ -232,9 +249,6 @@ class PeppermintTransformer(Transformer):
         return PipeStep(expr=expr, quiet=quiet)
 
     def pipe_expr(self, items):
-        # items alternates: source, pipe_step, pipe_step, ...
-        # but since pipe_expr is left-recursive via Lark, it comes as nested
-        # Lark flattens left-recursive rules so items = [left_pipe_or_expr, pipe_step]
         if len(items) == 2 and isinstance(items[1], PipeStep):
             left, step = items
             if isinstance(left, Pipe):
@@ -242,28 +256,26 @@ class PeppermintTransformer(Transformer):
                 return left
             else:
                 return Pipe(steps=[left, step])
-        # fallback: single expr (shouldn't happen with ?pipe_expr)
         return items[0]
 
     # --- Lambda ---
 
     def lambda_expr(self, items):
         body = items[-1]
-        params = [str(t) for t in items[:-1] if isinstance(t, Token) and t.type not in ("NL", "NEWLINE", "ARROW")]
+        params = [str(t) for t in items[:-1] if isinstance(t, Token) and t.type not in ("ARROW",)]
         return Lambda(params=params, body=body)
 
     def lambda_expr_noargs(self, items):
-        return Lambda(params=[], body=items[0])
+        body = [i for i in items if not (isinstance(i, Token) and i.type == "ARROW")]
+        return Lambda(params=[], body=body[0])
 
     def lambda_body(self, items):
-        non_nl = [i for i in items if not (isinstance(i, Token) and i.type in ("NL", "NEWLINE", "ARROW"))]
-        body = non_nl[-1]
-        params = [str(t) for t in non_nl[:-1] if isinstance(t, Token)]
+        body = items[-1]
+        params = [str(t) for t in items[:-1] if isinstance(t, Token) and t.type not in ("ARROW",)]
         return Lambda(params=params, body=body)
 
     def lambda_body_noargs(self, items):
-        non_nl = [i for i in items if not (isinstance(i, Token) and i.type in ("NL", "NEWLINE"))]
-        return Lambda(params=[], body=non_nl[0])
+        return Lambda(params=[], body=items[0])
 
     # --- Match ---
 

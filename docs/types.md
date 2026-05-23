@@ -21,25 +21,33 @@ Scalar = Int | Float | Str | Bool
 ## Pipe `|>`
 
 ```
-(|>) : Result<a> → (a → Result<b>) → Result<b>
+(|>) : Result<a> → (a → b) → Result<b>
 ```
 
-Monadic bind. Each step receives the unwrapped value from the previous step and returns a new `Result`:
+Railway-oriented bind. The pipe manages the `Result` wrapper — pure functions just receive and return plain values. Only IO functions (`load`, `save`) produce `Result` explicitly.
 
 ```
-bind(Ok(a),  f) = f(a)     -- unwrap and continue
-bind(Err(e), f) = Err(e)   -- skip, propagate error
+bind(Ok(a),  f) = Ok(f(a))   -- unwrap, apply, re-wrap
+bind(Err(e), f) = Err(e)     -- skip, propagate error
 ```
 
-A pipeline is a chain of binds:
+The source is always lifted into `Ok` on entry:
 
 ```
-load("data.csv")        -- Result<List<Object>>
-  |> filter(it.age > 18)  -- Result<List<Object>>
-  |> add(score: ...)       -- Result<List<Object>>
+[1, 2, 3]               -- plain List, lifted to Ok(List) by pipe
+  |> map(it * 2)          -- receives List, returns List, pipe wraps Ok
+  |> filter(it > 2)       -- same
 ```
 
-If any step returns `Err`, all downstream steps are skipped automatically.
+```
+load("data.csv")        -- Ok(List) | Err — IO can fail
+  |> filter(it.age > 18)  -- pure, pipe wraps result
+  |> add(score: ...)       -- pure, pipe wraps result
+```
+
+Any exception thrown inside a pipe step is caught and becomes `Err`. Outside a pipe, exceptions propagate normally.
+
+`match` is the only way to switch from the error track back to the happy track — errors cannot be silently ignored.
 
 ---
 
@@ -165,11 +173,58 @@ select : List<Object<S>> → label...               → List<Object<S ∩ {label
 rename : List<Object<S>> → (old: new)             → List<Object<S[old→new]>>
 sort   : List<Object<S>> → by → dir               → List<Object<S>>
 join   : List<Object<S>> → List<Object<T>> → on   → List<Object<S ∪ T>>
-group  : List<Object<S>> → by → (List<Object<S>> → List<Object<T>>) → List<Object<T>>
+group  : List<Object<S>> → by → (List<Object<S>> → List<Object<T>>) → List<Object<T ∪ {by}>>
 save   : List<Object<S>> → path                   → List<Object<S>>   -- pass-through
+agg    : List<Object<S>> → (label: AggFn)...      → List<Object<{label: Scalar}>>
 ```
 
 Passing a non-object list to these raises a type error.
+
+---
+
+## Aggregation
+
+```
+AggFn = sum(expr) | mean(expr) | count() | min(expr) | max(expr)
+```
+
+`agg` collapses a list into one row, running each `AggFn` over all elements:
+
+```
+agg : List<Object<S>> → (label₁: AggFn, label₂: AggFn, ...) → List<Object<{label₁: Scalar, ...}>>
+```
+
+The `AggFn` constructors are typed:
+
+```
+sum   : (Object<S> → Scalar) → AggFn
+mean  : (Object<S> → Scalar) → AggFn
+count : ()                   → AggFn
+min   : (Object<S> → Scalar) → AggFn
+max   : (Object<S> → Scalar) → AggFn
+```
+
+Inside each expression, `it` refers to the current row — same as in `filter` and `map`.
+
+`group` + `agg` pattern:
+
+```
+group(by: "k") { |> agg(n: count()) }
+  ≡  List<Object<S>> → List<Object<{ k: Str, n: Int }>>
+```
+
+---
+
+## List Construction
+
+A list literal `[{...}, {...}]` where all elements are objects produces `List<Object>`, the same type as `load()`. A list of scalars produces `List<Scalar>`:
+
+```
+[1, 2, 3]                             -- List<Int>
+[{ name: "a" }, { name: "b" }]        -- List<Object<{ name: Str }>>
+```
+
+The type is determined at construction — not at the call site.
 
 ---
 
@@ -195,13 +250,32 @@ filter(pred)
 Result<a> = Ok<a> | Err<Str>
 ```
 
-Every pipe step returns a `Result`. Handle with `match`:
+Every pipe produces a `Result`. Pure functions inside the pipe return plain values — the pipe wraps them. Only `load` and `save` return `Result` directly (IO can fail).
+
+Handle with `match`:
 
 ```
 match(result,
   Ok(data): data |> print(),
   Err(msg): print(msg)
 )
+```
+
+Outside a pipe, expressions are not wrapped — `1 + 1` is `2`, not `Ok(2)`. Errors outside a pipe crash.
+
+---
+
+## Object Shorthand
+
+```
+{ x }       ≡   { x: x }
+{ x, y }    ≡   { x: x, y: y }
+```
+
+Any name inside `{ }` without a `:` is shorthand for `name: name`. Can be mixed with explicit fields:
+
+```
+{ x, label: "hello", y }
 ```
 
 ---

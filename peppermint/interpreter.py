@@ -93,15 +93,21 @@ class Interpreter:
             case NsDecl():              return self.eval_ns(node, env)
             case Lambda():              return PmFunction(node.params, node.body, env)
             case FieldAccess():         return self.eval_field(node, env)
+            case Neg():                 return -self.eval(node.operand, env)
             case BinOp():               return self.eval_binop(node, env)
             case Call():                return self.eval_call(node, None, env)
             case Pipe():                return self.eval_pipe(node, env)
             case Block():               return self.eval_block(node, env)
             case Match():               return self.eval_match(node, env)
-            case ListLit():             return [self.eval(i, env) for i in node.items]
+            case ListLit():             return self.eval_list(node, env)
             case TupleLit():            return tuple(self.eval(i, env) for i in node.items)
             case ObjLit():              return self.eval_obj(node, env)
             case Spread(obj=o):         return self.eval(o, env)
+            case Literal(value=v):              return v
+            case ListValue() | PmFunction() | PmRange() | Ok() | Err():
+                return node  # already a runtime value, pass through
+            case _ if not isinstance(node, type) and not hasattr(node, '__dataclass_fields__'):
+                return node  # plain Python value (list, dict, int, etc.)
             case _:
                 raise PepError(f"cannot eval node: {type(node).__name__}")
 
@@ -193,6 +199,15 @@ class Interpreter:
             case "!=": return left != right
             case _: raise PepError(f"unknown operator '{node.op}'")
 
+    # --- List literal ---
+
+    def eval_list(self, node, env: Env):
+        items = [self.eval(i, env) for i in node.items]
+        if items and all(isinstance(i, dict) for i in items):
+            schema = {k: type(v) for k, v in items[0].items()}
+            return ListValue(rows=items, schema=schema)
+        return items
+
     # --- Object literal ---
 
     def eval_obj(self, node: ObjLit, env: Env) -> dict:
@@ -206,6 +221,8 @@ class Interpreter:
                     result.update(val)
                 else:
                     raise PepError(f"spread requires an object, got {type(val).__name__}")
+            elif isinstance(entry, ObjShorthand):
+                result[entry.key] = env.get(entry.key)
         return result
 
     # --- Pipe ---
@@ -217,14 +234,15 @@ class Interpreter:
         return result
 
     def eval_pipe(self, node: Pipe, env: Env) -> Any:
-        # First step is the source expression
-        result = self.eval(node.steps[0], env)
+        # Source enters the pipe — always wrap in Ok so every step sees Result
+        source = self.eval(node.steps[0], env)
+        result = source if isinstance(source, (Ok, Err)) else Ok(source)
 
         for step in node.steps[1:]:
             if isinstance(result, Err):
                 break  # short-circuit
 
-            value = result.value if isinstance(result, Ok) else result
+            value = result.value  # always Ok here, safe to unwrap
 
             if not isinstance(step, PipeStep):
                 raise PepError(f"pipe step must be a PipeStep, got {type(step).__name__}")
@@ -232,7 +250,11 @@ class Interpreter:
             show = not (step.quiet or self.quiet)
             before = value if isinstance(value, ListValue) else None
 
-            result = self.eval_call(step.expr, value, env)
+            try:
+                step_result = self.eval_call(step.expr, value, env)
+                result = step_result if isinstance(step_result, (Ok, Err)) else Ok(step_result)
+            except Exception as e:
+                result = Err(str(e))
 
             after = result.value if isinstance(result, Ok) else result
             if show and isinstance(before, ListValue) and isinstance(after, ListValue):
@@ -300,12 +322,10 @@ class Interpreter:
             kwargs = {k: _unwrap(self.eval(v, env)) for k, v in node.kwargs.items()}
             return self._call_pm_function(fn, args, kwargs, node.block, env)
         elif callable(fn):
-            # Stdlib Python functions: pass AST nodes for non-pipe args so they
-            # can use make_row_fn for it-injection. Pipe value is already evaluated.
-            args = pre + list(node.args)
-            kwargs = dict(node.kwargs)  # AST nodes as values
-            # Eagerly evaluate kwargs that are plain literals/idents (not row-dependent)
-            # We pass raw AST + _interp/_env/_block so stdlib can decide
+            # Stdlib Python functions: eagerly evaluate args that don't reference `it`,
+            # defer AST nodes only for row-dependent expressions (make_row_fn will handle them).
+            args = pre + [self._eval_or_defer(a, env) for a in node.args]
+            kwargs = {k: self._eval_or_defer(v, env) for k, v in node.kwargs.items()}
             try:
                 result = fn(*args, **kwargs, _block=node.block, _env=env, _interp=self)
             except TypeError:
@@ -381,6 +401,30 @@ class Interpreter:
 
             case _:
                 return False, {}
+
+    # --- Arg evaluation ---
+
+    def _uses_it(self, node) -> bool:
+        """Return True if the AST node references `it` anywhere."""
+        if isinstance(node, Ident):
+            return node.name == "it"
+        if isinstance(node, Lambda):
+            return False  # `it` inside a lambda is scoped there, not injected by caller
+        for attr in getattr(node, '__dataclass_fields__', {}):
+            child = getattr(node, attr)
+            if isinstance(child, list):
+                if any(self._uses_it(c) for c in child if hasattr(c, '__dataclass_fields__') or isinstance(c, Ident)):
+                    return True
+            elif hasattr(child, '__dataclass_fields__') or isinstance(child, Ident):
+                if self._uses_it(child):
+                    return True
+        return False
+
+    def _eval_or_defer(self, node, env):
+        """Evaluate the node now if it doesn't reference `it`; otherwise leave as AST."""
+        if self._uses_it(node):
+            return node
+        return self.eval(node, env)
 
     # --- it injection ---
 
