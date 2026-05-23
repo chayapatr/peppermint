@@ -238,6 +238,7 @@ A list of objects (`[{ ... }, { ... }]`) automatically becomes a typed `List<Obj
 | `count()` | Row count — use inside `agg` |
 | `min(expr)` | Minimum value — use inside `agg` |
 | `max(expr)` | Maximum value — use inside `agg` |
+| `len(list)` | Number of elements |
 | `print(value)` | Print and pass through |
 
 ### `use math`

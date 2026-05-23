@@ -256,6 +256,13 @@ def length(data, _interp=None, _env=None, **_):
     return len(items)
 
 
+def slice_(data, start, end, _interp=None, _env=None, **_):
+    items, is_lv = _to_list(data)
+    if start < 0 or end < 0:
+        raise ValueError("slice indices must be non-negative")
+    return items[start:end + 1]  # inclusive end
+
+
 def concat(*args, _interp=None, _env=None, **_):
     result = []
     for arg in args:
@@ -292,6 +299,7 @@ def build_core_env() -> dict:
         "print":  print_,
         "get":    get,
         "set":    set_,
-        "length": length,
+        "len":    length,
         "concat": concat,
+        "slice":  slice_,
     }

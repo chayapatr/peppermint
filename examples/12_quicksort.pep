@@ -1,4 +1,4 @@
-qs = lst -> match(length(lst),
+qs = lst -> match(len(lst),
   == 0: lst,
   _: (
     pivot   = lst[0]
