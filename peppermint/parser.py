@@ -336,6 +336,7 @@ class Parser:
         node = self._parse_cmp()
         while self._at("AND", "OR"):
             op_tok = self._eat("AND", "OR")
+            self._skip_nl()
             right = self._parse_cmp()
             node = BinOp(op=op_tok.value, left=node, right=right)
         return node
@@ -359,6 +360,7 @@ class Parser:
         node = self._parse_mul()
         while self._at("PLUS", "MINUS"):
             op_tok = self._eat("PLUS", "MINUS")
+            self._skip_nl()
             right = self._parse_mul()
             node = BinOp(op=op_tok.value, left=node, right=right)
         return node
@@ -367,6 +369,7 @@ class Parser:
         node = self._parse_unary()
         while self._at("STAR", "SLASH", "MOD"):
             op_tok = self._eat("STAR", "SLASH", "MOD")
+            self._skip_nl()
             right = self._parse_unary()
             node = BinOp(op=op_tok.value, left=node, right=right)
         return node

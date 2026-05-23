@@ -1,32 +1,37 @@
 use str
 use math
 
-get2d = (grid, x, y) -> grid[y * 8 + x]
+W = 8
 
-safe = (grid, x, y) -> match(x,
-  < 0: 0, > 7: 0,
-  _: match(y, < 0: 0, > 7: 0, _: get2d(grid, x, y))
-)
+at = (grid, x, y) ->
+  match(x, < 0: 0, >= W: 0,
+    _: match(y, < 0: 0, >= W: 0,
+      _: grid[y * W + x]
+    )
+  )
 
-nb_top = (grid, x, y) -> safe(grid, x-1, y-1) + safe(grid, x, y-1) + safe(grid, x+1, y-1)
-nb_mid = (grid, x, y) -> safe(grid, x-1, y) + safe(grid, x+1, y)
-nb_bot = (grid, x, y) -> safe(grid, x-1, y+1) + safe(grid, x, y+1) + safe(grid, x+1, y+1)
-neighbors = (grid, x, y) -> nb_top(grid, x, y) + nb_mid(grid, x, y) + nb_bot(grid, x, y)
+neighbors = (grid, x, y) ->
+  at(grid, x-1, y-1) + at(grid, x, y-1) + at(grid, x+1, y-1) +
+  at(grid, x-1, y)                      + at(grid, x+1, y)   +
+  at(grid, x-1, y+1) + at(grid, x, y+1) + at(grid, x+1, y+1)
 
 next_cell = (grid, x, y) -> (
-  cell = get2d(grid, x, y)
-  n = neighbors(grid, x, y)
+  cell = grid[y * W + x]
+  n    = neighbors(grid, x, y)
   match(cell,
     1: match(n, 2: 1, 3: 1, _: 0),
     _: match(n, 3: 1, _: 0)
   )
 )
 
-next_gen = grid -> mapi(grid, next_cell(grid, it.idx % 8, math.floor(it.idx / 8)))
+next_gen = grid ->
+  mapi(grid, next_cell(grid, it.idx % W, math.floor(it.idx / W)))
 
-cell_char = (grid, i) -> match(grid[i], 1: "#", _: ".")
-sep = i -> match(i % 8, 0: "\n", _: "")
-render = grid -> str.join(mapi(grid, str.join([sep(it.idx), cell_char(grid, it.idx)], "")), "")
+render = grid -> (
+  row  = i -> match(i % W, 0: "\n", _: "")
+  cell = i -> match(grid[i], 1: "#", _: ".")
+  str.join(mapi(grid, str.join([row(it.idx), cell(it.idx)], "")), "")
+)
 
 run = (grid, n) -> match(n, 0: grid, _: run(next_gen(grid), n - 1))
 
@@ -41,10 +46,9 @@ glider = [
   0, 0, 0, 0, 0, 0, 0, 0
 ]
 
-
-f = x -> (
+step = x -> (
   run(glider, x) |> render |> print
-  match(x, < 20: f(x+1), _: 0)
+  match(x, < 20: step(x + 1), _: none)
 )
 
-f(0)
+step(0)
