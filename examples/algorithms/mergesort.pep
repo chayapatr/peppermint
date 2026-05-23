@@ -1,16 +1,16 @@
 merge = (a, b) ->
   match(len(a) == 0 or len(b) == 0,
-    == true: match(len(a) == 0, == true: b, _: a),
-    _:       match(a[0] <= b[0],
-      == true: concat([a[0]], merge(a[1..len(a)-1], b)),
-      _:       concat([b[0]], merge(a, b[1..len(b)-1]))
+    true: match(len(a) == 0, true: b, _: a),
+    _:    match(a[0] <= b[0],
+      true: concat([a[0]], merge(a[1..len(a)-1], b)),
+      _:    concat([b[0]], merge(a, b[1..len(b)-1]))
     )
   )
 
 ms = lst ->
   match(len(lst),
-    == 0: lst,
-    == 1: lst,
+    0: lst,
+    1: lst,
     _: (
       mid   = len(lst) / 2
       left  = lst[0..mid-1]

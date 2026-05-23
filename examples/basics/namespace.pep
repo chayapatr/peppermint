@@ -10,9 +10,9 @@ ns transforms {
   label_region = data -> (
     data
       |> add(region_label: match(it.region,
-          == "US": "United States",
-          == "EU": "Europe",
-          == "APAC": "Asia Pacific",
+          "US": "United States",
+          "EU": "Europe",
+          "APAC": "Asia Pacific",
           _: "Other"))
   )
 }

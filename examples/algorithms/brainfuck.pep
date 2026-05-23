@@ -2,21 +2,21 @@ use str
 
 # find matching ] for [ at position ip (scan forward)
 find_close = (prog, ip, depth) -> match(depth,
-  == 0: ip,
+  0: ip,
   _: match(str.at(prog, ip),
-    == "[": find_close(prog, ip + 1, depth + 1),
-    == "]": find_close(prog, ip + 1, depth - 1),
-    _: find_close(prog, ip + 1, depth)
+    "[": find_close(prog, ip + 1, depth + 1),
+    "]": find_close(prog, ip + 1, depth - 1),
+    _:   find_close(prog, ip + 1, depth)
   )
 )
 
 # find matching [ for ] at position ip (scan backward)
 find_open = (prog, ip, depth) -> match(depth,
-  == 0: ip,
+  0: ip,
   _: match(str.at(prog, ip),
-    == "]": find_open(prog, ip - 1, depth + 1),
-    == "[": find_open(prog, ip - 1, depth - 1),
-    _: find_open(prog, ip - 1, depth)
+    "]": find_open(prog, ip - 1, depth + 1),
+    "[": find_open(prog, ip - 1, depth - 1),
+    _:   find_open(prog, ip - 1, depth)
   )
 )
 
@@ -27,16 +27,16 @@ step = state -> (
   ip   = state.ip
   prog = state.prog
   out  = state.output
-  cell = get(tape, ptr)
+  cell = tape[ptr]
   match(str.at(prog, ip),
-    == "+": {tape: set(tape, ptr, cell + 1), ptr: ptr, ip: ip + 1, prog: prog, output: out},
-    == "-": {tape: set(tape, ptr, cell - 1), ptr: ptr, ip: ip + 1, prog: prog, output: out},
-    == ">": {tape: tape, ptr: ptr + 1,       ip: ip + 1, prog: prog, output: out},
-    == "<": {tape: tape, ptr: ptr - 1,       ip: ip + 1, prog: prog, output: out},
-    == ".": {tape: tape, ptr: ptr,           ip: ip + 1, prog: prog, output: str.join([out, str.char(cell)], "")},
-    == "[": {tape: tape, ptr: ptr, ip: match(cell, == 0: find_close(prog, ip + 1, 1), _: ip + 1), prog: prog, output: out},
-    == "]": {tape: tape, ptr: ptr, ip: match(cell, == 0: ip + 1, _: find_open(prog, ip - 1, 1)),  prog: prog, output: out},
-    _:      {tape: tape, ptr: ptr,           ip: ip + 1, prog: prog, output: out}
+    "+": {tape: set(tape, ptr, cell + 1), ptr: ptr, ip: ip + 1, prog: prog, output: out},
+    "-": {tape: set(tape, ptr, cell - 1), ptr: ptr, ip: ip + 1, prog: prog, output: out},
+    ">": {tape: tape, ptr: ptr + 1, ip: ip + 1, prog: prog, output: out},
+    "<": {tape: tape, ptr: ptr - 1, ip: ip + 1, prog: prog, output: out},
+    ".": {tape: tape, ptr: ptr, ip: ip + 1, prog: prog, output: str.join([out, str.char(cell)], "")},
+    "[": {tape: tape, ptr: ptr, ip: match(cell, 0: find_close(prog, ip + 1, 1), _: ip + 1), prog: prog, output: out},
+    "]": {tape: tape, ptr: ptr, ip: match(cell, 0: ip + 1, _: find_open(prog, ip - 1, 1)),  prog: prog, output: out},
+    _:   {tape: tape, ptr: ptr, ip: ip + 1, prog: prog, output: out}
   )
 )
 

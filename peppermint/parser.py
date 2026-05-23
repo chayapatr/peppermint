@@ -616,6 +616,9 @@ class Parser:
             name = self._eat("NAME").value
             self._eat("RPAREN")
             pattern = PatErr(name=name, loc=self._loc(tok))
+        elif tok.type in ("INT", "FLOAT", "STRING", "TRUE", "FALSE"):
+            pat_val = self._parse_pat_val()
+            pattern = PatComparison(op="==", value=pat_val)
         else:
             raise ParseError(f"expected match pattern, got {tok.type}", tok.line, tok.col)
         self._eat("COLON")
