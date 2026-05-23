@@ -5,14 +5,26 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "peppermint"
 version = "0.1.0"
+description = "A pipe-first DSL for data and ML work"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Chayapatr Archiwaranguprok", email = "pub@mit.edu" }]
 requires-python = ">=3.11"
-dependencies = [
-    "pandas",
-    "scikit-learn",
-    "umap-learn",
-    "matplotlib",
-    "seaborn",
+dependencies = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Information Analysis",
 ]
+
+[project.optional-dependencies]
+data = ["pandas"]
+ml = ["pandas", "scikit-learn", "umap-learn"]
+viz = ["pandas", "matplotlib", "seaborn"]
+all = ["pandas", "scikit-learn", "umap-learn", "matplotlib", "seaborn"]
+
+[project.urls]
+Repository = "https://github.com/chayapatr/peppermint"
 
 [project.scripts]
 pep = "peppermint.__main__:main"
