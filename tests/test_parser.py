@@ -334,6 +334,31 @@ clean = data -> (
     assert isinstance(lam.body, Pipe)
 
 
+def test_lambda_body_pipe_continuation():
+    # |> on next line after -> body should be merged into the same pipe
+    node = parse("""
+f = x ->
+  x
+    |> filter(it > 1)
+    |> filter(it > 2)
+""").body[0]
+    lam = node.value
+    assert isinstance(lam.body, Pipe)
+    assert len(lam.body.steps) == 3
+
+
+def test_lambda_body_pipe_continuation_single_arg():
+    # single-arg lambda with multiline pipe body (no parens)
+    node = parse("""
+f = x -> x
+  |> filter(it > 0)
+  |> filter(it > 1)
+""").body[0]
+    lam = node.value
+    assert isinstance(lam.body, Pipe)
+    assert len(lam.body.steps) == 3
+
+
 # --- Aggregation ---
 
 def test_agg_parses():

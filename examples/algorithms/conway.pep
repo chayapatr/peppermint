@@ -5,8 +5,8 @@ W = 8
 
 at = (grid, x, y) -> match(
     x, < 0: 0, >= W: 0,
-    _: match(y, < 0: 0, >= W: 0, _: grid[y * W + x]
-))
+    _: match(y, < 0: 0, >= W: 0, _: grid[y * W + x])
+)
 
 neighbors = (grid, x, y) ->
   at(grid, x-1, y-1) + at(grid, x, y-1) + at(grid, x+1, y-1) +
@@ -22,8 +22,7 @@ next_cell = (grid, x, y) -> (
   )
 )
 
-next_gen = grid ->
-  mapi(grid,next_cell(grid, it.idx % W, math.floor(it.idx / W)))
+next_gen = grid -> mapi(grid,next_cell(grid, it.idx % W, math.floor(it.idx / W)))
 
 render = grid -> (
   row  = i -> match(i % W, 0: "\n", _: "")

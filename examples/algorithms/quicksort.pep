@@ -1,5 +1,5 @@
 qs = lst -> match(len(lst),
-  0: lst,
+  1: lst,
   _: (
     pivot   = lst[0]
     less    = filter(lst, it < pivot)

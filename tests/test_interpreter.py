@@ -230,3 +230,38 @@ data |> group(by: "cat") { |> agg(n: count()) }
 def test_pipe_short_circuits_on_err():
     result = run('load("nonexistent.csv") |> filter(it.x > 0)')
     assert isinstance(result, Err)
+
+
+# --- Multiline pipe in lambda body ---
+
+def test_lambda_multiline_pipe_body():
+    result = val("""
+double_filter = lst ->
+  lst
+    |> filter(it > 1)
+    |> filter(it > 3)
+double_filter([1, 2, 3, 4, 5])
+""")
+    assert isinstance(result, ListValue)
+    assert result.rows == [4, 5]
+
+def test_lambda_multiline_pipe_body_map():
+    result = val("""
+process = lst ->
+  lst
+    |> map(it * 2)
+    |> filter(it > 4)
+process([1, 2, 3, 4])
+""")
+    assert isinstance(result, ListValue)
+    assert result.rows == [6, 8]
+
+def test_lambda_multiline_pipe_no_indent():
+    result = val("""
+f = x -> x
+  |> map(it + 1)
+  |> filter(it > 3)
+f([1, 2, 3, 4])
+""")
+    assert isinstance(result, ListValue)
+    assert result.rows == [4, 5]

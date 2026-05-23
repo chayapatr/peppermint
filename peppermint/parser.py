@@ -291,7 +291,18 @@ class Parser:
 
     def _parse_lambda_body(self):
         self._skip_nl()
-        return self._parse_pipe()
+        node = self._parse_pipe()
+        # allow |> continuation across newlines in a lambda body
+        while self._at("NL") and self._at_after_nl("PIPE"):
+            self._skip_nl()
+            while self._at("PIPE"):
+                self._eat("PIPE")
+                step = self._parse_pipe_step()
+                if isinstance(node, Pipe):
+                    node.steps.append(step)
+                else:
+                    node = Pipe(steps=[node, step])
+        return node
 
     def _parse_paren_item(self):
         """An item inside paren_body: assignment or full expr, optionally followed by |> steps."""
@@ -619,7 +630,7 @@ class Parser:
             name = self._eat("NAME").value
             self._eat("RPAREN")
             pattern = PatErr(name=name, loc=self._loc(tok))
-        elif tok.type in ("INT", "FLOAT", "STRING", "TRUE", "FALSE"):
+        elif tok.type in ("INT", "FLOAT", "STRING", "TRUE", "FALSE", "NONE"):
             pat_val = self._parse_pat_val()
             pattern = PatComparison(op="==", value=pat_val)
         else:
@@ -646,6 +657,9 @@ class Parser:
         if tok.type == "FALSE":
             self._eat("FALSE")
             return False
+        if tok.type == "NONE":
+            self._eat("NONE")
+            return None
         if tok.type == "NAME":
             self._eat("NAME")
             return Ident(name=tok.value, loc=self._loc(tok))
