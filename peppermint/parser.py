@@ -384,6 +384,11 @@ class Parser:
                 if self._at("LBRACE"):
                     block = self._parse_block()
                 node = Call(func=node, args=args, kwargs=kwargs, block=block, loc=self._loc(lparen))
+            elif self._at("LBRACKET"):
+                lbracket = self._eat("LBRACKET")
+                index = self._parse_expr()
+                self._eat("RBRACKET")
+                node = Call(func=Ident(name="get", loc=self._loc(lbracket)), args=[node, index], kwargs={}, block=None, loc=self._loc(lbracket))
             else:
                 break
         return node

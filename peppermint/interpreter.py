@@ -287,7 +287,10 @@ class Interpreter:
             before = value if isinstance(value, ListValue) else None
 
             try:
-                step_result = self.eval_call(step.expr, value, env)
+                expr = step.expr
+                if isinstance(expr, (Ident, FieldAccess)):
+                    expr = Call(func=expr, args=[], kwargs={}, block=None, loc=expr.loc)
+                step_result = self.eval_call(expr, value, env)
                 result = step_result if isinstance(step_result, (Ok, Err)) else Ok(step_result)
             except PepError as e:
                 step_name = self._call_name(step.expr)

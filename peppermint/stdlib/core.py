@@ -256,6 +256,14 @@ def length(data, _interp=None, _env=None, **_):
     return len(items)
 
 
+def concat(*args, _interp=None, _env=None, **_):
+    result = []
+    for arg in args:
+        items, _ = _to_list(arg)
+        result.extend(items)
+    return result
+
+
 for _fn in (filter_, map_, mapi, add, sort, reduce, group, agg, sum_, mean_, count_, min_, max_):
     _fn._accepts_deferred = True
 
@@ -285,4 +293,5 @@ def build_core_env() -> dict:
         "get":    get,
         "set":    set_,
         "length": length,
+        "concat": concat,
     }
