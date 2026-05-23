@@ -118,7 +118,7 @@ class Interpreter:
             case StrLit(value=v):       return v
             case BoolLit(value=v):      return v
             case NoneLit():             return None
-            case Range(start=s, end=e): return PmRange(s, e)
+            case Range(start=s, end=e): return PmRange(self.eval(s, env), self.eval(e, env))
             case Ident(name=n, loc=l):  return env.get(n, loc=l)
             case Assign():              return self.eval_assign(node, env)
             case UseDecl():             return self.eval_use(node, env)

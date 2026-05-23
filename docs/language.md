@@ -200,6 +200,14 @@ A list of objects (`[{ ... }, { ... }]`) automatically becomes a typed `List<Obj
   |> print()
 ```
 
+### Indexing and slicing
+
+```
+lst[0]       # get element at index
+lst[1..3]    # slice from index 1 to 3 (inclusive)
+lst[mid..len(lst)-1]  # dynamic expressions work too
+```
+
 ---
 
 ## Operators
@@ -210,6 +218,8 @@ A list of objects (`[{ ... }, { ... }]`) automatically becomes a typed `List<Obj
 |>                   # pipe
 ->                   # lambda
 ...                  # spread
+lst[i]               # index
+lst[a..b]            # slice (inclusive)
 ```
 
 ---
@@ -239,6 +249,8 @@ A list of objects (`[{ ... }, { ... }]`) automatically becomes a typed `List<Obj
 | `min(expr)` | Minimum value — use inside `agg` |
 | `max(expr)` | Maximum value — use inside `agg` |
 | `len(list)` | Number of elements |
+| `get(list, i)` | Element at index (prefer `list[i]`) |
+| `concat(a, b, ...)` | Concatenate lists |
 | `print(value)` | Print and pass through |
 
 ### `use math`

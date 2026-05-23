@@ -205,8 +205,8 @@ def test_obj_spread():
 def test_range():
     node = expr("2..8")
     assert isinstance(node, Range)
-    assert node.start == 2
-    assert node.end == 8
+    assert isinstance(node.start, IntLit) and node.start.value == 2
+    assert isinstance(node.end, IntLit) and node.end.value == 8
 
 
 

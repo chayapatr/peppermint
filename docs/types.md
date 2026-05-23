@@ -6,7 +6,6 @@
 Type = Scalar
      | List<Type>
      | Object<{ label: Type, ... }>
-     | Tuple<Type...>
      | Result<Type>
      | Fn<Type... → Type>
      | None
@@ -49,6 +48,13 @@ Any exception thrown inside a pipe step is caught and becomes `Err`. Outside a p
 
 `match` is the only way to switch from the error track back to the happy track — errors cannot be silently ignored.
 
+Bare name in a pipe step is called as a zero-arg function with the piped value:
+
+```
+data |> print      -- same as data |> print()
+data |> clean      -- same as data |> clean()
+```
+
 ---
 
 ## `it`
@@ -82,8 +88,8 @@ Patterns:
 
 ```
 > n   < n   >= n   <= n   == n   != n    -- comparison (Scalar)
+== true   == false                       -- boolean match
 Ok(x)   Err(x)                           -- Result destructure
-(p, p, ...)                              -- Tuple destructure
 _                                        -- wildcard, always matches
 ```
 
@@ -119,9 +125,19 @@ Functions can reference themselves. The binding is updated after assignment so t
 fact = n -> match(n, == 0: 1, _: n * fact(n - 1))
 ```
 
-### Sequencing
+### Local bindings
 
-Inside `( )`, `;` or newlines separate multiple expressions. The last one is returned:
+Inside `( )`, assignments are local — they don't leak into the outer scope. The last expression is the return value:
+
+```
+next_cell = (grid, x, y) -> (
+  cell = get(grid, x, y)   -- local to this block
+  n    = neighbors(grid, x, y)
+  match(cell, ...)
+)
+```
+
+Semicolons also work as statement separators:
 
 ```
 f = x -> (print(x); f(x - 1))
@@ -129,7 +145,7 @@ f = x -> (print(x); f(x - 1))
 
 Type:
 ```
-Block : Expr... → a    -- evaluates each, returns last
+Block : Expr... → a    -- evaluates each in a local scope, returns last
 ```
 
 ---
@@ -139,10 +155,13 @@ Block : Expr... → a    -- evaluates each, returns last
 ### Functor
 
 ```
-map : List<a> → (a → b) → List<b>
+map  : List<a> → (a → b) → List<b>
+mapi : List<a> → ({idx: Int, value: a} → b) → List<b>
 ```
 
-Output type follows the return value of the transform — `Object` in gives `List<Object>` out, `Scalar` in gives `List<Scalar>` out.
+`mapi` passes `{idx, value}` as `it` — useful when you need the index alongside the element.
+
+Output type follows the return value of the transform.
 
 ### Filterable
 
@@ -159,6 +178,23 @@ reduce : List<a> → b → ((b, a) → b) → b
 ```
 
 `fn` takes two explicit args — accumulator first, current element second.
+
+---
+
+## List Operations
+
+```
+len    : List<a> → Int
+get    : List<a> → Int → a           -- prefer lst[i] syntax
+concat : List<a>... → List<a>
+```
+
+Indexing and slicing syntax:
+
+```
+lst[i]      ≡  get(lst, i)
+lst[a..b]   ≡  slice(lst, a, b)     -- inclusive end, dynamic expressions ok
+```
 
 ---
 

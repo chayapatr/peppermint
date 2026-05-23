@@ -9,8 +9,9 @@ from .ast_nodes import *
 import re
 
 _TOKEN_RE = re.compile(r"""
-    (?P<RANGE>    \d+\.\.\d+                              )  |
-    (?P<FLOAT>    -?(?:\d+\.\d*|\.\d+)(?:[eE][+-]?\d+)?   )  |
+    (?P<FLOAT>    -?(?:\d+\.(?!\.)|\.\d+)\d*(?:[eE][+-]?\d+)?   )  |
+    (?P<SPREAD>   \.\.\.                                  )  |
+    (?P<DOTDOT>   \.\.                                    )  |
     (?P<INT>      \d+                                     )  |
     (?P<STRING>   "(?:[^"\\]|\\.)*"                       )  |
     (?P<ARROW>    ->                                      )  |
@@ -21,7 +22,6 @@ _TOKEN_RE = re.compile(r"""
     (?P<NEQ>      !=                                      )  |
     (?P<GT>       >                                       )  |
     (?P<LT>       <                                       )  |
-    (?P<SPREAD>   \.\.\.                                  )  |
     (?P<DOT>      \.                                      )  |
     (?P<PLUS>     \+                                      )  |
     (?P<MINUS>    -                                       )  |
@@ -336,6 +336,10 @@ class Parser:
 
     def _parse_cmp(self):
         node = self._parse_add()
+        if self._at("DOTDOT"):
+            self._eat("DOTDOT")
+            end = self._parse_add()
+            return Range(start=node, end=end, loc=node.loc if hasattr(node, 'loc') else NO_LOC)
         while self._at(*self._CMP_OPS):
             op_tok = self._eat(*self._CMP_OPS)
             right = self._parse_add()
@@ -386,10 +390,10 @@ class Parser:
                 node = Call(func=node, args=args, kwargs=kwargs, block=block, loc=self._loc(lparen))
             elif self._at("LBRACKET"):
                 lbracket = self._eat("LBRACKET")
-                index = self._parse_expr()
+                index = self._parse_cmp()  # may return Range if .. present
                 self._eat("RBRACKET")
                 if isinstance(index, Range):
-                    node = Call(func=Ident(name="slice", loc=self._loc(lbracket)), args=[node, IntLit(value=index.start, loc=index.loc), IntLit(value=index.end, loc=index.loc)], kwargs={}, block=None, loc=self._loc(lbracket))
+                    node = Call(func=Ident(name="slice", loc=self._loc(lbracket)), args=[node, index.start, index.end], kwargs={}, block=None, loc=self._loc(lbracket))
                 else:
                     node = Call(func=Ident(name="get", loc=self._loc(lbracket)), args=[node, index], kwargs={}, block=None, loc=self._loc(lbracket))
             else:
@@ -439,11 +443,6 @@ class Parser:
         if tok.type == "FLOAT":
             self._eat("FLOAT")
             return FloatLit(value=float(tok.value), loc=self._loc(tok))
-
-        if tok.type == "RANGE":
-            self._eat("RANGE")
-            start, end = tok.value.split("..")
-            return Range(start=int(start), end=int(end), loc=self._loc(tok))
 
         if tok.type == "STRING":
             self._eat("STRING")
@@ -623,6 +622,12 @@ class Parser:
         if tok.type == "STRING":
             self._eat("STRING")
             return tok.value[1:-1].encode("raw_unicode_escape").decode("unicode_escape")
+        if tok.type == "TRUE":
+            self._eat("TRUE")
+            return True
+        if tok.type == "FALSE":
+            self._eat("FALSE")
+            return False
         if tok.type == "NAME":
             self._eat("NAME")
             return Ident(name=tok.value, loc=self._loc(tok))

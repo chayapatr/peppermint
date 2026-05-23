@@ -167,8 +167,8 @@ class Spread:
 
 @dataclass
 class Range:
-    start: int
-    end: int
+    start: Any   # Expr (IntLit or arbitrary expression)
+    end: Any     # Expr
     loc: Loc = field(default_factory=lambda: NO_LOC)
 
 @dataclass

@@ -257,7 +257,8 @@ def length(data, _interp=None, _env=None, **_):
 
 
 def slice_(data, start, end, _interp=None, _env=None, **_):
-    items, is_lv = _to_list(data)
+    items, _ = _to_list(data)
+    start, end = int(start), int(end)
     if start < 0 or end < 0:
         raise ValueError("slice indices must be non-negative")
     return items[start:end + 1]  # inclusive end
@@ -267,7 +268,7 @@ def concat(*args, _interp=None, _env=None, **_):
     result = []
     for arg in args:
         items, _ = _to_list(arg)
-        result.extend(items)
+        result.extend(_unwrap(x) for x in items)
     return result
 
 
