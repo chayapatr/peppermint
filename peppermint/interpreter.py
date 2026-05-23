@@ -42,6 +42,7 @@ class Ok:
 @dataclass
 class Err:
     msg: str
+    cause: "PepError | None" = None
     def __repr__(self): return f"Err({self.msg!r})"
 
 @dataclass
@@ -73,12 +74,12 @@ class Env:
         self._vars: dict[str, Any] = {}
         self.parent = parent
 
-    def get(self, name: str) -> Any:
+    def get(self, name: str, loc=None) -> Any:
         if name in self._vars:
             return self._vars[name]
         if self.parent:
-            return self.parent.get(name)
-        raise PepError(f"undefined variable '{name}'")
+            return self.parent.get(name, loc)
+        raise PepError(f"undefined variable '{name}'", loc=loc, span=len(name))
 
     def set(self, name: str, value: Any):
         self._vars[name] = value
@@ -91,7 +92,10 @@ class Env:
 
 
 class PepError(Exception):
-    pass
+    def __init__(self, msg: str, loc: "Loc | None" = None, span: int = 0):
+        super().__init__(msg)
+        self.loc = loc
+        self.span = span
 
 
 # --- Interpreter ---
@@ -115,7 +119,7 @@ class Interpreter:
             case BoolLit(value=v):      return v
             case NoneLit():             return None
             case Range(start=s, end=e): return PmRange(s, e)
-            case Ident(name=n):         return env.get(n)
+            case Ident(name=n, loc=l):  return env.get(n, loc=l)
             case Assign():              return self.eval_assign(node, env)
             case UseDecl():             return self.eval_use(node, env)
             case NsDecl():              return self.eval_ns(node, env)
@@ -204,9 +208,9 @@ class Interpreter:
         if isinstance(obj, dict):
             if node.field not in obj:
                 available = ", ".join(obj.keys())
-                raise PepError(f"field '{node.field}' does not exist. available: {available}")
+                raise PepError(f"field '{node.field}' does not exist. available: {available}", loc=node.loc, span=len(node.field))
             return obj[node.field]
-        raise PepError(f"cannot access field '{node.field}' on {type(obj).__name__}")
+        raise PepError(f"cannot access field '{node.field}' on {type(obj).__name__}", loc=node.loc, span=len(node.field))
 
     # --- Binary ops ---
 
@@ -284,6 +288,9 @@ class Interpreter:
             try:
                 step_result = self.eval_call(step.expr, value, env)
                 result = step_result if isinstance(step_result, (Ok, Err)) else Ok(step_result)
+            except PepError as e:
+                step_name = self._call_name(step.expr)
+                result = Err(f"{step_name}: {e}", cause=e)
             except Exception as e:
                 step_name = self._call_name(step.expr)
                 result = Err(f"{step_name}: {e}")
@@ -334,9 +341,9 @@ class Interpreter:
             if isinstance(ns, dict) and node.func.field in ns:
                 fn = ns[node.func.field]
             else:
-                raise PepError(f"'{self._call_name(node.func.obj)}' has no function '{node.func.field}'")
+                raise PepError(f"'{self._call_name(node.func.obj)}' has no function '{node.func.field}'", loc=node.func.loc, span=len(node.func.field))
         elif isinstance(node.func, Ident):
-            fn = env.get(node.func.name)
+            fn = env.get(node.func.name, loc=node.func.loc)
         else:
             fn = self.eval(node.func, env)
 
@@ -355,7 +362,7 @@ class Interpreter:
             kwargs = {k: _unwrap(self.eval(v, env)) for k, v in node.kwargs.items()}
             if tail:
                 return _TailCall(fn=fn, args=args, env=env)
-            return self._call_pm_function(fn, args, kwargs, node.block, env)
+            return self._call_pm_function(fn, args, kwargs, node.block, env, call_loc=node.loc)
         elif callable(fn):
             # Only defer AST nodes for functions that explicitly handle them via make_row_fn.
             # All other stdlib functions get fully-evaluated args.
@@ -379,13 +386,13 @@ class Interpreter:
                 result = Ok(result)
             return result
         else:
-            raise PepError(f"'{self._call_name(node.func)}' is not callable (got {type(fn).__name__})")
+            raise PepError(f"'{self._call_name(node.func)}' is not callable (got {type(fn).__name__})", loc=node.loc)
 
-    def _call_pm_function(self, fn: PmFunction, args: list, kwargs: dict, block, env: Env) -> Any:
+    def _call_pm_function(self, fn: PmFunction, args: list, kwargs: dict, block, env: Env, call_loc=None) -> Any:
         # Trampoline: loop on tail calls to avoid growing the Python call stack
         while True:
             if len(args) != len(fn.params):
-                raise PepError(f"expected {len(fn.params)} args, got {len(args)}")
+                raise PepError(f"expected {len(fn.params)} args, got {len(args)}", loc=call_loc)
             bindings = dict(zip(fn.params, args))
             call_env = fn.closure.extend(bindings)
             result = self.eval_tail(fn.body, call_env)

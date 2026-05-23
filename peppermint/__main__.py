@@ -1,22 +1,61 @@
 import sys
 import argparse
 sys.setrecursionlimit(50000)
-from .parser import parse
-from .interpreter import Interpreter, Err, Ok
+from .parser import parse, ParseError
+from .interpreter import Interpreter, Err, Ok, PepError
 from .stdlib import build_global_env
+
+
+def _render_error(kind: str, msg: str, src: str | None, line: int, col: int, span: int, filename: str):
+    lines = src.splitlines() if src else []
+    line_str = str(line)
+    pad = len(line_str)
+
+    # Source line format: " {line_str} │ {content}"
+    # │ sits at column index pad+2 (0-based): 1 space + line_str + 1 space
+    # All gutter lines put their box char at the same column index.
+    g = " " * (pad + 2)  # spaces before │ / · / ╭ / ╰
+    print(f"\033[1;31mError:\033[0m × {msg}", file=sys.stderr)
+    print(f"{g}\033[2m╭─[\033[0m{filename}:{line}:{col}\033[2m]\033[0m", file=sys.stderr)
+
+    # If line is past the file (e.g. unexpected EOF), show last line and point to end
+    show_line = line if 0 < line <= len(lines) else len(lines)
+    if show_line > 0 and lines:
+        source_line = lines[show_line - 1]
+        show_str = str(show_line)
+        print(f" {show_str} \033[2m│\033[0m {source_line}", file=sys.stderr)
+
+        col0 = (col - 1) if line <= len(lines) else len(source_line)
+        col0 = max(0, min(col0, len(source_line)))
+        left_pad = " " * col0
+        span = max(span, 1)
+        mid = span // 2
+
+        if span == 1:
+            print(f"{g}\033[2m·\033[0m {left_pad}\033[1;33m^\033[0m", file=sys.stderr)
+            print(f"{g}\033[2m·\033[0m {left_pad}\033[2m╰──\033[0m {kind}", file=sys.stderr)
+        else:
+            bar = "─" * mid + "┬" + "─" * (span - mid - 1)
+            print(f"{g}\033[2m·\033[0m {left_pad}\033[1;33m{bar}\033[0m", file=sys.stderr)
+            print(f"{g}\033[2m·\033[0m {left_pad}{' ' * mid}\033[2m╰──\033[0m {kind}", file=sys.stderr)
+
+    print(f"{g}\033[2m╰────\033[0m", file=sys.stderr)
 
 
 def run_file(args):
     try:
         src = open(args.file).read()
     except FileNotFoundError:
-        print(f"pep: file not found: {args.file}", file=sys.stderr)
+        print(f"\033[1;31mError:\033[0m × file not found: {args.file}", file=sys.stderr)
         sys.exit(1)
 
     try:
         program = parse(src)
+    except ParseError as e:
+        _render_error("parse error", str(e.args[0]).split(": ", 1)[-1], src, e.line, e.col, 1, args.file)
+        sys.exit(1)
     except Exception as e:
-        print(f"pep: parse error: {e}", file=sys.stderr)
+        print(f"\033[1;31mError:\033[0m × {e}", file=sys.stderr)
         sys.exit(1)
 
     env = build_global_env()
@@ -24,12 +63,23 @@ def run_file(args):
 
     try:
         result = interp.run(program)
+    except PepError as e:
+        loc = e.loc
+        if loc and loc.line:
+            _render_error(str(e), str(e), src, loc.line, loc.col, e.span, args.file)
+        else:
+            print(f"\033[1;31mError:\033[0m × {e}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
-        print(f"pep: runtime error: {e}", file=sys.stderr)
+        print(f"\033[1;31mError:\033[0m × {e}", file=sys.stderr)
         sys.exit(1)
 
     if isinstance(result, Err):
-        print(f"pep: error: {result.msg}", file=sys.stderr)
+        cause = result.cause
+        if cause and cause.loc and cause.loc.line:
+            _render_error(str(cause), result.msg, src, cause.loc.line, cause.loc.col, cause.span, args.file)
+        else:
+            print(f"\033[1;31mError:\033[0m × {result.msg}", file=sys.stderr)
         sys.exit(1)
 
 

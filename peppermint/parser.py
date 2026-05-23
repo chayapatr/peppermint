@@ -38,7 +38,7 @@ _TOKEN_RE = re.compile(r"""
     (?P<COLON>    :                                       )  |
     (?P<EQUALS>   =                                       )  |
     (?P<NL>       [\n;]+                                  )  |
-    (?P<NAME>     [a-zA-Z_][a-zA-Z0-9_]*                 )  |
+    (?P<NAME>     [a-zA-Z_][a-zA-Z0-9_]*                  )  |
     (?P<WS>       [ \t]+                                  )  |
     (?P<COMMENT>  \#[^\n]*                                )
 """, re.VERBOSE)
@@ -369,9 +369,9 @@ class Parser:
             if self._at("DOT"):
                 self._eat("DOT")
                 field_tok = self._eat("NAME")
-                node = FieldAccess(obj=node, field=field_tok.value)
+                node = FieldAccess(obj=node, field=field_tok.value, loc=self._loc(field_tok))
             elif self._at("LPAREN"):
-                self._eat("LPAREN")
+                lparen = self._eat("LPAREN")
                 self._skip_nl()
                 args, kwargs = [], {}
                 if not self._at("RPAREN"):
@@ -380,7 +380,7 @@ class Parser:
                 block = None
                 if self._at("LBRACE"):
                     block = self._parse_block()
-                node = Call(func=node, args=args, kwargs=kwargs, block=block)
+                node = Call(func=node, args=args, kwargs=kwargs, block=block, loc=self._loc(lparen))
             else:
                 break
         return node
