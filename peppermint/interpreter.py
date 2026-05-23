@@ -120,9 +120,15 @@ class Interpreter:
         import os
         path = node.path
 
-        if path in ("ml", "viz", "math", "io"):
-            # stdlib namespace — load on demand
-            from .stdlib import load_stdlib
+        from .stdlib import load_stdlib
+        from pathlib import Path
+        _libs_path = Path(__file__).parent / "libs"
+        _is_stdlib = (
+            (_libs_path / f"{path}.py").exists() or
+            (_libs_path / f"{path}_.py").exists()
+        )
+
+        if _is_stdlib:
             ns = load_stdlib(path)
             target = node.alias or path
             env.set(target, ns)

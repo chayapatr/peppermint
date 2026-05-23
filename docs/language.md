@@ -194,6 +194,7 @@ Python files are loaded via the bridge — functions receive and return plain Py
 | Function | Description |
 |---|---|
 | `load(path)` | Load CSV or JSON as list of rows |
+| `save(path)` | Write list to CSV or JSON file |
 | `filter(pred)` | Keep elements matching condition — any list |
 | `map(expr)` | Transform every element — any list |
 | `reduce(init, fn)` | Fold list into a single value |
@@ -202,7 +203,7 @@ Python files are loaded via the bridge — functions receive and return plain Py
 | `select(fields...)` | Keep only specified fields |
 | `rename(old: new)` | Rename a field |
 | `sort(by, dir)` | Sort rows |
-| `join(other, on)` | Join two lists on a key |
+| `join(other, on)` | Join two lists on a shared key field |
 | `group(by) { }` | Group by field, run sub-pipe per group |
 | `print(value)` | Print and pass through |
 
@@ -235,3 +236,52 @@ Python files are loaded via the bridge — functions receive and return plain Py
 | `viz.heatmap()` | Correlation heatmap |
 | `viz.plot()` | Auto-plot based on data shape |
 | `viz.grid(...)` | Multiple plots side by side |
+
+### `use str`
+
+| Function | Description |
+|---|---|
+| `str.trim(s)` | Strip whitespace |
+| `str.lower(s)` | Lowercase |
+| `str.upper(s)` | Uppercase |
+| `str.replace(s, old, new)` | Replace substring |
+| `str.split(s, sep)` | Split into list |
+| `str.join(parts, sep)` | Join list into string |
+| `str.contains(s, sub)` | True if substring present |
+| `str.starts_with(s, prefix)` | True if starts with prefix |
+| `str.ends_with(s, suffix)` | True if ends with suffix |
+| `str.length(s)` | String length |
+| `str.match(s, pattern)` | True if regex matches |
+| `str.slice(s, start, end?)` | Substring by index |
+
+---
+
+## Working with `none`
+
+`none` is a first-class value. Filter it out explicitly:
+
+```
+|> filter(it.income != none)
+```
+
+Or use `match` to handle it per-row:
+
+```
+|> add(income: match(it.income, == none: 0, _: it.income))
+```
+
+---
+
+## Joining datasets
+
+```
+people = load("people.csv")
+scores = load("scores.csv")
+
+people
+  |> join(scores, on: "id")
+  |> filter(it.score > 0.8)
+  |> print()
+```
+
+`join` does an inner join — rows with no match in `other` are dropped.

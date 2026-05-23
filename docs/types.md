@@ -166,6 +166,7 @@ rename : List<Object<S>> → (old: new)             → List<Object<S[old→new]
 sort   : List<Object<S>> → by → dir               → List<Object<S>>
 join   : List<Object<S>> → List<Object<T>> → on   → List<Object<S ∪ T>>
 group  : List<Object<S>> → by → (List<Object<S>> → List<Object<T>>) → List<Object<T>>
+save   : List<Object<S>> → path                   → List<Object<S>>   -- pass-through
 ```
 
 Passing a non-object list to these raises a type error.
@@ -205,12 +206,43 @@ match(result,
 
 ---
 
-## ML Functions
+## Libraries (`use`)
 
-Operate on `List<Object<S>>`, add columns, return `List<Object<S'>>`:
+Loaded on demand. Any `.py` file in `peppermint/libs/` is autodiscovered. User Python files loaded via `use "./file.py"` go through the bridge automatically.
+
+### ML — `use ml`
+
+Operate on `List<Object<S>>`, add columns:
 
 ```
 ml.embed(col)  : List<Object<S>> → List<Object<S ∪ {embedding: List<Float>}>>
 ml.kmeans(k)   : List<Object<S>> → List<Object<S ∪ {cluster: Int}>>
 ml.umap(dims)  : List<Object<S>> → List<Object<S ∪ {umap1: Float, umap2: Float, ...}>>
+ml.ols(target) : List<Object<S>> → List<Object<S ∪ {predicted: Float}>>
 ```
+
+### Str — `use str`
+
+Operate on `Str`, return `Str` or `Bool`:
+
+```
+str.trim(s)              : Str → Str
+str.lower(s)             : Str → Str
+str.upper(s)             : Str → Str
+str.replace(s, old, new) : Str → Str
+str.split(s, sep)        : Str → List<Str>
+str.join(parts, sep)     : List<Str> → Str
+str.contains(s, sub)     : Str → Bool
+str.starts_with(s, pre)  : Str → Bool
+str.ends_with(s, suf)    : Str → Bool
+str.length(s)            : Str → Int
+str.match(s, pattern)    : Str → Bool
+str.slice(s, start, end) : Str → Str
+```
+
+### Bridge
+
+Python libs loaded via `use` go through `peppermint/bridge.py`:
+- `to_python` / `from_python` — convert between Peppermint and Python types
+- `get_rows`, `make_list`, `map_rows`, `add_column`, `filter_rows` — row utilities
+- `ok(val)`, `err(msg)` — construct results without importing interpreter internals
