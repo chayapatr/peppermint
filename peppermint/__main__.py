@@ -5,7 +5,7 @@ from .parser import parse, ParseError
 from .interpreter import Interpreter, Err, Ok, PepError
 from .stdlib import build_global_env
 from .diagnostics import report_parse_error, report_pep_error, report_err
-from .interpreter import ListValue, PmFunction, PmRange
+from .interpreter import PmFunction, PmRange
 
 
 def _repl_display(value):
@@ -23,9 +23,6 @@ def _repl_display(value):
     elif isinstance(value, str):
         val_str = repr(value)
         type_str = "str"
-    elif isinstance(value, ListValue):
-        val_str = repr(value)
-        type_str = ""
     elif isinstance(value, PmFunction):
         val_str = repr(value)
         type_str = "fn"
@@ -37,8 +34,10 @@ def _repl_display(value):
         val_str = "{ " + pairs + " }"
         type_str = "obj"
     elif isinstance(value, list):
-        val_str = repr(value)
-        type_str = "list"
+        rows = len(value)
+        cols = len(value[0].keys()) if value and isinstance(value[0], dict) else 0
+        val_str = f"List  {rows} rows × {cols} cols" if cols else f"List  {rows} items"
+        type_str = ""
     else:
         val_str = str(value)
         type_str = type(value).__name__

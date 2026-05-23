@@ -46,8 +46,8 @@ run = (state, len) -> match(state.ip,
   _: run(step(state), len)
 )
 
-# Hello World
-prog = "++++++++[>++++[>++>+++>+++>+<<<<-]>+>+>->>+[<]<-]>>.>---.+++++++..+++.>>.<-.<.+++.------.--------.>>+.>++."
-init = {tape: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], ptr: 0, ip: 0, prog: prog, output: ""}
+# prints "Hi" (72=H, 105=i)
+prog = "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++.+++++++++++++++++++++++++++++++++."
+init = {tape: [0, 0], ptr: 0, ip: 0, prog: prog, output: ""}
 result = run(init, str.length(prog))
 print(result.output)

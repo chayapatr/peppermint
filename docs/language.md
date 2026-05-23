@@ -126,6 +126,19 @@ Functions can call themselves recursively:
 fact = n -> match(n, 0: 1, _: n * fact(n - 1))
 ```
 
+### Curried functions
+
+A lambda body can itself be a lambda, giving you curried functions:
+
+```
+add = x -> y -> x + y
+add(1)(2)    # 3
+
+mul = x -> y -> x * y
+double = mul(2)
+double(5)    # 10
+```
+
 Call them like any built-in:
 
 ```
@@ -154,7 +167,7 @@ match(result,
 )
 ```
 
-`match` is the only way back to the happy track — errors can't be silently ignored.
+This works whether `result` is assigned from a pipe or computed inline. `match` is the only way back to the happy track — errors can't be silently ignored.
 
 ---
 
@@ -214,6 +227,22 @@ A list of objects (`[{ ... }, { ... }]`) automatically becomes a typed `List<Obj
 lst[0]       # get element at index
 lst[1..3]    # slice from index 1 to 3 (inclusive)
 lst[mid..len(lst)-1]  # dynamic expressions work too
+```
+
+### Dynamic field access
+
+Use a variable as the key to access object fields:
+
+```
+row = { name: "alice", age: 25 }
+field = "name"
+row[field]    # "alice"
+```
+
+Useful when the field name is determined at runtime:
+
+```
+data |> map(it[field])
 ```
 
 ---

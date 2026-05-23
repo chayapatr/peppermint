@@ -1,6 +1,6 @@
 import pytest
 from peppermint.parser import parse
-from peppermint.interpreter import Interpreter, Ok, Err, ListValue
+from peppermint.interpreter import Interpreter, Ok, Err
 from peppermint.stdlib import build_global_env
 
 
@@ -114,20 +114,20 @@ def test_obj_spread():
 
 def test_plain_list():
     result = val("[1, 2, 3]")
-    assert isinstance(result, ListValue)
-    assert result.rows == [1, 2, 3]
+    assert isinstance(result, list)
+    assert result == [1, 2, 3]
 
-def test_list_of_dicts_becomes_listvalue():
+def test_list_of_dicts():
     result = val('[{ name: "alice" }, { name: "bob" }]')
-    assert isinstance(result, ListValue)
-    assert len(result.rows) == 2
-    assert result.rows[0] == {"name": "alice"}
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert result[0] == {"name": "alice"}
 
-def test_listvalue_schema():
+def test_list_of_dicts_fields():
     result = val('[{ age: 10, score: 1.0 }]')
-    assert isinstance(result, ListValue)
-    assert "age" in result.schema
-    assert "score" in result.schema
+    assert isinstance(result, list)
+    assert "age" in result[0]
+    assert "score" in result[0]
 
 
 # --- Pipe ---
@@ -135,13 +135,13 @@ def test_listvalue_schema():
 
 def test_pipe_map():
     result = val('[1, 2, 3] |> map(it * 2)')
-    assert isinstance(result, ListValue)
-    assert result.rows == [2, 4, 6]
+    assert isinstance(result, list)
+    assert result == [2, 4, 6]
 
 def test_pipe_filter():
     result = val('[1, 2, 3, 4] |> filter(it > 2)')
-    assert isinstance(result, ListValue)
-    assert result.rows == [3, 4]
+    assert isinstance(result, list)
+    assert result == [3, 4]
 
 def test_pipe_reduce():
     result = val('[1, 2, 3, 4] |> reduce(0, (acc, x) -> acc + x)')
@@ -161,33 +161,33 @@ def test_pipe_err_short_circuits():
 
 def test_agg_sum():
     result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> agg(total: sum(it.v))')
-    assert isinstance(result, ListValue)
-    assert result.rows[0]["total"] == 6
+    assert isinstance(result, list)
+    assert result[0]["total"] == 6
 
 def test_agg_mean():
     result = val('[{ v: 10 }, { v: 20 }] |> agg(avg: mean(it.v))')
-    assert isinstance(result, ListValue)
-    assert result.rows[0]["avg"] == pytest.approx(15.0)
+    assert isinstance(result, list)
+    assert result[0]["avg"] == pytest.approx(15.0)
 
 def test_agg_count():
     result = val('[{ x: 1 }, { x: 2 }, { x: 3 }] |> agg(n: count())')
-    assert isinstance(result, ListValue)
-    assert result.rows[0]["n"] == 3
+    assert isinstance(result, list)
+    assert result[0]["n"] == 3
 
 def test_agg_min():
     result = val('[{ v: 5 }, { v: 2 }, { v: 8 }] |> agg(lo: min(it.v))')
-    assert isinstance(result, ListValue)
-    assert result.rows[0]["lo"] == 2
+    assert isinstance(result, list)
+    assert result[0]["lo"] == 2
 
 def test_agg_max():
     result = val('[{ v: 5 }, { v: 2 }, { v: 8 }] |> agg(hi: max(it.v))')
-    assert isinstance(result, ListValue)
-    assert result.rows[0]["hi"] == 8
+    assert isinstance(result, list)
+    assert result[0]["hi"] == 8
 
 def test_agg_multi():
     result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> agg(total: sum(it.v), n: count(), avg: mean(it.v))')
-    assert isinstance(result, ListValue)
-    row = result.rows[0]
+    assert isinstance(result, list)
+    row = result[0]
     assert row["total"] == 6
     assert row["n"] == 3
     assert row["avg"] == pytest.approx(2.0)
@@ -207,10 +207,9 @@ data
     |> agg(total: sum(it.income), n: count())
 }
 """)
-    assert isinstance(result, ListValue)
-    rows = result.rows
-    assert len(rows) == 2
-    by_region = {r["region"]: r for r in rows}
+    assert isinstance(result, list)
+    assert len(result) == 2
+    by_region = {r["region"]: r for r in result}
     assert by_region["A"]["total"] == 30
     assert by_region["A"]["n"] == 2
     assert by_region["B"]["total"] == 30
@@ -221,8 +220,8 @@ def test_group_preserves_key():
 data = [{ cat: "x", v: 1 }, { cat: "x", v: 2 }, { cat: "y", v: 3 }]
 data |> group(by: "cat") { |> agg(n: count()) }
 """)
-    assert isinstance(result, ListValue)
-    assert all("cat" in r for r in result.rows)
+    assert isinstance(result, list)
+    assert all("cat" in r for r in result)
 
 
 # --- Ok / Err propagation ---
@@ -242,8 +241,8 @@ double_filter = lst ->
     |> filter(it > 3)
 double_filter([1, 2, 3, 4, 5])
 """)
-    assert isinstance(result, ListValue)
-    assert result.rows == [4, 5]
+    assert isinstance(result, list)
+    assert result == [4, 5]
 
 def test_lambda_multiline_pipe_body_map():
     result = val("""
@@ -253,8 +252,8 @@ process = lst ->
     |> filter(it > 4)
 process([1, 2, 3, 4])
 """)
-    assert isinstance(result, ListValue)
-    assert result.rows == [6, 8]
+    assert isinstance(result, list)
+    assert result == [6, 8]
 
 def test_lambda_multiline_pipe_no_indent():
     result = val("""
@@ -263,5 +262,70 @@ f = x -> x
   |> filter(it > 3)
 f([1, 2, 3, 4])
 """)
-    assert isinstance(result, ListValue)
-    assert result.rows == [4, 5]
+    assert isinstance(result, list)
+    assert result == [4, 5]
+
+
+# --- Curried lambdas ---
+
+def test_curried_lambda_basic():
+    assert val("add = x -> y -> x + y\nadd(1)(2)") == 3
+
+def test_curried_lambda_three():
+    assert val("f = x -> y -> z -> x + y + z\nf(1)(2)(3)") == 6
+
+def test_curried_lambda_partial():
+    assert val("add = x -> y -> x + y\nadd5 = add(5)\nadd5(3)") == 8
+
+def test_curried_lambda_in_map():
+    result = val("mul = x -> y -> x * y\n[1, 2, 3] |> map(mul(10)(it))")
+    assert result == [10, 20, 30]
+
+
+# --- Dynamic field access ---
+
+def test_obj_dynamic_key():
+    assert val('row = { name: "alice" }\nfield = "name"\nrow[field]') == "alice"
+
+def test_obj_dynamic_key_computed():
+    assert val('row = { x: 1, y: 2 }\nk = "x"\nrow[k]') == 1
+
+def test_obj_dynamic_key_in_map():
+    result = val('data = [{ v: 10 }, { v: 20 }]\nf = "v"\ndata |> map(it[f])')
+    assert result == [10, 20]
+
+
+# --- match on stored Ok ---
+
+def test_match_stored_ok():
+    assert val('result = load("nonexistent")\nmatch(result, Ok(v): v, Err(e): "failed")') == "failed"
+
+def test_match_stored_ok_value():
+    result = val('[1,2,3] |> filter(it > 1)\nresult = [1,2,3] |> filter(it > 1)\nmatch(result, Ok(v): len(v), Err(e): 0)')
+    assert result == 2
+
+
+# --- reduce with nested deferred calls ---
+
+def test_reduce_mapi_in_lambda():
+    result = val("""
+index_in = lst -> val -> reduce(
+  mapi(lst, { idx: it.idx, found: it.value == val }),
+  none,
+  (acc, row) -> match(acc, none: match(row.found, true: row.idx, _: none), _: acc)
+)
+items = ["a", "b", "c"]
+index_in(items)("b")
+""")
+    assert result == 1
+
+def test_reduce_mapi_in_lambda_first():
+    result = val("""
+index_in = lst -> val -> reduce(
+  mapi(lst, { idx: it.idx, found: it.value == val }),
+  none,
+  (acc, row) -> match(acc, none: match(row.found, true: row.idx, _: none), _: acc)
+)
+index_in(["x", "y", "z"])("x")
+""")
+    assert result == 0

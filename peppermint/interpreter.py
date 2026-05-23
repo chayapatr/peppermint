@@ -46,14 +46,6 @@ class Err:
     def __repr__(self): return f"Err({self.msg!r})"
 
 @dataclass
-class ListValue:
-    rows: list[dict]
-    schema: dict[str, type]
-
-    def __repr__(self):
-        return f"List  {len(self.rows)} rows × {len(self.schema)} cols"
-
-@dataclass
 class PmFunction:
     params: list[str]
     body: Any   # Expr
@@ -136,7 +128,7 @@ class Interpreter:
             case ObjLit():              return self.eval_obj(node, env)
             case Spread(obj=o):         return self.eval(o, env)
             case Literal(value=v):              return v
-            case ListValue() | PmFunction() | PmRange() | Ok() | Err():
+            case PmFunction() | PmRange() | Ok() | Err():
                 return node  # already a runtime value, pass through
             case _ if not isinstance(node, type) and not hasattr(node, '__dataclass_fields__'):
                 return node  # plain Python value (list, dict, int, etc.)
@@ -147,6 +139,9 @@ class Interpreter:
 
     def eval_assign(self, node: Assign, env: Env) -> Any:
         value = self.eval(node.value, env)
+        # Flatten nested Ok(Ok(...)) but preserve a single Ok/Err wrapper
+        while isinstance(value, Ok) and isinstance(value.value, Ok):
+            value = value.value
         env.set(node.name, value)
         if isinstance(value, PmFunction):
             value.closure.set(node.name, value)
@@ -250,11 +245,7 @@ class Interpreter:
 
     def eval_list(self, node, env: Env):
         items = [self.eval(i, env) for i in node.items]
-        if items and all(isinstance(i, dict) for i in items):
-            schema = {k: type(v) for k, v in items[0].items()}
-        else:
-            schema = {}
-        return ListValue(rows=items, schema=schema)
+        return [i.value if isinstance(i, Ok) else i for i in items]
 
     # --- Object literal ---
 
@@ -297,7 +288,7 @@ class Interpreter:
                 raise PepError(f"pipe step must be a PipeStep, got {type(step).__name__}")
 
             show = not (step.quiet or self.quiet)
-            before = value if isinstance(value, ListValue) else None
+            before = value if isinstance(value, list) else None
 
             try:
                 expr = step.expr
@@ -313,24 +304,26 @@ class Interpreter:
                 result = Err(f"{step_name}: {e}")
 
             after = result.value if isinstance(result, Ok) else result
-            if show and isinstance(after, ListValue):
+            if show and isinstance(after, list):
                 self._print_step(step.expr, before, after)
 
         return result
 
-    def _print_step(self, call_node, before: ListValue | None, after: ListValue):
+    def _print_step(self, call_node, before: list | None, after: list):
         import sys
         name = self._call_name(call_node)
         desc = f"\033[2m|>\033[0m \033[36m{name}\033[0m"
         desc_plain = f"|> {name}"
-        rows = len(after.rows)
-        cols = len(after.schema)
+        rows = len(after)
+        cols = len(after[0].keys()) if after and isinstance(after[0], dict) else 0
         pad = max(0, 34 - len(desc_plain))
         shape = f"\033[2mList\033[0m  \033[1m{rows}\033[0m rows × \033[1m{cols}\033[0m cols" if cols > 0 else f"\033[2mList\033[0m  \033[1m{rows}\033[0m items"
         line = f"{desc}{' ' * pad}\033[2m→\033[0m {shape}"
         if before is not None:
-            dropped = len(before.rows) - rows
-            added_cols = set(after.schema) - set(before.schema)
+            dropped = len(before) - rows
+            before_cols = set(before[0].keys()) if before and isinstance(before[0], dict) else set()
+            after_cols = set(after[0].keys()) if after and isinstance(after[0], dict) else set()
+            added_cols = after_cols - before_cols
             if dropped > 0:
                 line += f"  \033[31m({dropped} dropped)\033[0m"
             if added_cols:
@@ -363,6 +356,10 @@ class Interpreter:
             fn = env.get(node.func.name, loc=node.func.loc)
         else:
             fn = self.eval(node.func, env)
+
+        # Unwrap Ok wrapper so curried lambdas (f(x)(y)) work naturally
+        if isinstance(fn, Ok):
+            fn = fn.value
 
         # Inject pipe value as first positional arg (always evaluated)
         if pipe_value is not None:
@@ -434,7 +431,8 @@ class Interpreter:
 
     def eval_match_tail(self, node: Match, env: Env) -> Any:
         subject = self.eval(node.subject, env)
-        if isinstance(subject, Ok):
+        has_result_pattern = any(isinstance(arm.pattern, (PatOk, PatErr)) for arm in node.arms)
+        if not has_result_pattern and isinstance(subject, Ok):
             subject = subject.value
         for arm in node.arms:
             matched, bindings = self._match_pattern(arm.pattern, subject, env)
@@ -457,7 +455,8 @@ class Interpreter:
 
     def eval_match(self, node: Match, env: Env) -> Any:
         subject = self.eval(node.subject, env)
-        if isinstance(subject, Ok):
+        has_result_pattern = any(isinstance(arm.pattern, (PatOk, PatErr)) for arm in node.arms)
+        if not has_result_pattern and isinstance(subject, Ok):
             subject = subject.value
 
         for arm in node.arms:

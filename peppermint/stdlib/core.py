@@ -2,17 +2,7 @@ from __future__ import annotations
 import json
 from typing import Any
 import pandas as pd
-from ..interpreter import Ok, Err, ListValue, PmFunction
-
-
-def _infer_schema(rows: list) -> dict[str, type]:
-    if not rows or not isinstance(rows[0], dict):
-        return {}
-    return {k: type(v) for k, v in rows[0].items()}
-
-
-def _list_value(rows: list[dict]) -> ListValue:
-    return ListValue(rows=rows, schema=_infer_schema(rows))
+from ..interpreter import Ok, Err, PmFunction
 
 
 def _eval_arg(arg, interp, env):
@@ -24,18 +14,12 @@ def _eval_arg(arg, interp, env):
     return arg
 
 
-def _to_list(data) -> tuple[list, bool]:
+def _to_list(data) -> list:
     if isinstance(data, Ok):
         return _to_list(data.value)
-    if isinstance(data, ListValue):
-        return data.rows, True
     if isinstance(data, list):
-        return data, False
+        return data
     raise TypeError(f"expected a List, got {type(data).__name__}")
-
-
-def _from_list(items: list, is_object_list: bool):
-    return _list_value(items)
 
 
 def _unwrap(v):
@@ -54,15 +38,16 @@ def load(path, _interp=None, _env=None, **_) -> Ok | Err:
         else:
             df = pd.read_csv(path)
             rows = df.to_dict(orient="records")
-        return Ok(_list_value(rows))
+        return Ok(rows)
     except Exception as e:
         return Err(str(e))
 
 
-def save(data: ListValue, path, _interp=None, _env=None, **_) -> Ok | Err:
+def save(data, path, _interp=None, _env=None, **_) -> Ok | Err:
     try:
         path = _eval_arg(path, _interp, _env)
-        df = pd.DataFrame(data.rows)
+        rows = _to_list(data)
+        df = pd.DataFrame(rows)
         if path.endswith(".json"):
             df.to_json(path, orient="records", indent=2)
         else:
@@ -74,70 +59,63 @@ def save(data: ListValue, path, _interp=None, _env=None, **_) -> Ok | Err:
 
 # --- Pure functions — return plain values ---
 
-def filter_(data, pred, _interp=None, _env=None, **_) -> ListValue | list:
-    items, is_obj = _to_list(data)
+def filter_(data, pred, _interp=None, _env=None, **_) -> list:
+    items = _to_list(data)
     fn = _interp.make_row_fn(pred, _env)
-    out = [item for item in items if _unwrap(fn(item))]
-    return _from_list(out, is_obj)
+    return [item for item in items if _unwrap(fn(item))]
 
 
-def map_(data, transform, _interp=None, _env=None, **_) -> ListValue:
-    items, _ = _to_list(data)
+def map_(data, transform, _interp=None, _env=None, **_) -> list:
+    items = _to_list(data)
     fn = _interp.make_row_fn(transform, _env)
-    out = [_unwrap(fn(item)) for item in items]
-    return _from_list(out, False)
+    return [_unwrap(fn(item)) for item in items]
 
 
-def mapi(data, transform, _interp=None, _env=None, **_) -> ListValue:
+def mapi(data, transform, _interp=None, _env=None, **_) -> list:
     """map with index — it is {idx: i, value: x}"""
-    items, _ = _to_list(data)
+    items = _to_list(data)
     fn = _interp.make_row_fn(transform, _env)
-    out = [_unwrap(fn({"idx": i, "value": x})) for i, x in enumerate(items)]
-    return _from_list(out, False)
+    return [_unwrap(fn({"idx": i, "value": x})) for i, x in enumerate(items)]
 
 
-def add(data: ListValue, _interp=None, _env=None, **kwargs) -> ListValue:
+def add(data, _interp=None, _env=None, **kwargs) -> list:
     non_meta = {k: v for k, v in kwargs.items() if not k.startswith("_")}
     if len(non_meta) != 1:
         raise ValueError("add() requires exactly one keyword argument: the new field name")
     field, expr = next(iter(non_meta.items()))
     fn = _interp.make_row_fn(expr, _env)
-    rows = [{**row, field: _unwrap(fn(row))} for row in data.rows]
-    return _list_value(rows)
+    return [{**row, field: _unwrap(fn(row))} for row in _to_list(data)]
 
 
-def drop(data: ListValue, field, _interp=None, _env=None, **_) -> ListValue:
+def drop(data, field, _interp=None, _env=None, **_) -> list:
     field = _eval_arg(field, _interp, _env)
-    rows = [{k: v for k, v in row.items() if k != field} for row in data.rows]
-    return _list_value(rows)
+    return [{k: v for k, v in row.items() if k != field} for row in _to_list(data)]
 
 
-def select(data: ListValue, *fields, _interp=None, _env=None, **_) -> ListValue:
+def select(data, *fields, _interp=None, _env=None, **_) -> list:
     fields = [_eval_arg(f, _interp, _env) for f in fields]
-    rows = [{f: row[f] for f in fields if f in row} for row in data.rows]
-    return _list_value(rows)
+    return [{f: row[f] for f in fields if f in row} for row in _to_list(data)]
 
 
-def rename(data: ListValue, _interp=None, _env=None, **kwargs) -> ListValue:
+def rename(data, _interp=None, _env=None, **kwargs) -> list:
     non_meta = {k: v for k, v in kwargs.items() if not k.startswith("_")}
     if len(non_meta) != 1:
         raise ValueError("rename() requires exactly one keyword argument: old: new")
     old, new_expr = next(iter(non_meta.items()))
     new = _eval_arg(new_expr, _interp, _env)
-    rows = [{(new if k == old else k): v for k, v in row.items()} for row in data.rows]
-    return _list_value(rows)
+    return [{(new if k == old else k): v for k, v in row.items()} for row in _to_list(data)]
 
 
-def sort(data: ListValue, by=None, dir=None, _interp=None, _env=None, **_) -> ListValue:
+def sort(data, by=None, dir=None, _interp=None, _env=None, **_) -> list:
     by = _eval_arg(by, _interp, _env)
     dir = _eval_arg(dir, _interp, _env) if dir is not None else "asc"
-    rows = sorted(data.rows, key=lambda r: r.get(by), reverse=(dir == "desc"))
-    return _list_value(rows)
+    return sorted(_to_list(data), key=lambda r: r.get(by) if isinstance(r, dict) else r, reverse=(dir == "desc"))
 
 
 def reduce(data, init, fn, _interp=None, _env=None, **_) -> Any:
     import functools
-    items, _ = _to_list(data)
+    data = _eval_arg(data, _interp, _env)
+    items = _to_list(data)
     init = _eval_arg(init, _interp, _env)
     pm_fn = _interp.eval(fn, _env) if _interp else fn
 
@@ -149,7 +127,7 @@ def reduce(data, init, fn, _interp=None, _env=None, **_) -> Any:
     return functools.reduce(apply, items, init)
 
 
-def group(data: ListValue, by=None, _block=None, _interp=None, _env=None, **_) -> ListValue:
+def group(data, by=None, _block=None, _interp=None, _env=None, **_) -> list:
     if by is None:
         raise ValueError("group() requires 'by' argument")
     by = _eval_arg(by, _interp, _env)
@@ -159,34 +137,33 @@ def group(data: ListValue, by=None, _block=None, _interp=None, _env=None, **_) -
     from ..ast_nodes import Pipe, Literal
 
     groups: dict[str, list[dict]] = {}
-    for row in data.rows:
+    for row in _to_list(data):
         key = str(row.get(by, ""))
         groups.setdefault(key, []).append(row)
 
     all_rows = []
     for key, rows in groups.items():
-        group_data = ListValue(rows=rows, schema=_infer_schema(rows))
-        pipe = Pipe(steps=[Literal(group_data)] + list(_block))
+        pipe = Pipe(steps=[Literal(rows)] + list(_block))
         result = _interp.eval_pipe(pipe, _env)
         if isinstance(result, Err):
-            return result  # propagate sub-pipe error up
+            return result
         value = result.value
-        if not isinstance(value, ListValue):
+        if not isinstance(value, list):
             raise TypeError(f"group sub-pipe must produce a List, got {type(value).__name__}")
-        all_rows.extend([{by: key, **row} for row in value.rows])
+        all_rows.extend([{by: key, **row} for row in value])
 
-    return _list_value(all_rows)
+    return all_rows
 
 
-def join(data: ListValue, other: ListValue, on=None, _interp=None, _env=None, **_) -> ListValue:
+def join(data, other, on=None, _interp=None, _env=None, **_) -> list:
     on = _eval_arg(on, _interp, _env)
-    index = {row[on]: row for row in other.rows if on in row}
-    rows = [{**row, **index[row.get(on)]} for row in data.rows if row.get(on) in index]
-    return _list_value(rows)
+    other_rows = _to_list(other)
+    index = {row[on]: row for row in other_rows if on in row}
+    return [{**row, **index[row.get(on)]} for row in _to_list(data) if row.get(on) in index]
 
 
 def print_(data, _interp=None, _env=None, **_):
-    val = _eval_arg(data, _interp, _env) if not isinstance(data, ListValue) else data
+    val = _eval_arg(data, _interp, _env)
     print(val)
     return val
 
@@ -217,47 +194,46 @@ def _apply_agg(fn: _AggFn, items: list, interp, env) -> Any:
     if fn.name == "max":  return max(vals)
 
 
-def agg(data, _interp=None, _env=None, **kwargs) -> ListValue | dict:
-    items, _ = _to_list(data)
+def agg(data, _interp=None, _env=None, **kwargs) -> list:
+    items = _to_list(data)
     non_meta = {k: v for k, v in kwargs.items() if not k.startswith("_")}
     result = {}
     for field, expr in non_meta.items():
-        fn = _eval_arg(expr, _interp, _env)
-        fn = _unwrap(fn)
+        fn = _unwrap(_eval_arg(expr, _interp, _env))
         if isinstance(fn, _AggFn):
             result[field] = _apply_agg(fn, items, _interp, _env)
         else:
             result[field] = fn
-    if isinstance(data, ListValue):
-        return _list_value([result])
-    return result
+    return [result]
 
 
 def get(data, i, _interp=None, _env=None, **_):
-    items, _ = _to_list(data)
+    if isinstance(data, Ok): data = data.value
     i = _eval_arg(i, _interp, _env)
     if isinstance(i, Ok): i = i.value
-    return items[int(i)]
+    if isinstance(data, dict):
+        if i not in data:
+            raise KeyError(f"key '{i}' not found in object")
+        return data[i]
+    return _to_list(data)[int(i)]
 
 
 def set_(data, i, v, _interp=None, _env=None, **_):
-    items, _ = _to_list(data)
+    items = list(_to_list(data))
     i = _eval_arg(i, _interp, _env)
     if isinstance(i, Ok): i = i.value
     v = _eval_arg(v, _interp, _env)
     if isinstance(v, Ok): v = v.value
-    new = list(items)
-    new[int(i)] = v
-    return _from_list(new, False)
+    items[int(i)] = v
+    return items
 
 
 def length(data, _interp=None, _env=None, **_):
-    items, _ = _to_list(data)
-    return len(items)
+    return len(_to_list(data))
 
 
 def slice_(data, start, end, _interp=None, _env=None, **_):
-    items, _ = _to_list(data)
+    items = _to_list(data)
     start, end = int(start), int(end)
     if start < 0 or end < 0:
         raise ValueError("slice indices must be non-negative")
@@ -267,8 +243,7 @@ def slice_(data, start, end, _interp=None, _env=None, **_):
 def concat(*args, _interp=None, _env=None, **_):
     result = []
     for arg in args:
-        items, _ = _to_list(arg)
-        result.extend(_unwrap(x) for x in items)
+        result.extend(_unwrap(x) for x in _to_list(arg))
     return result
 
 

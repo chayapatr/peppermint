@@ -291,7 +291,7 @@ class Parser:
 
     def _parse_lambda_body(self):
         self._skip_nl()
-        node = self._parse_pipe()
+        node = self._parse_expr()
         # allow |> continuation across newlines in a lambda body
         while self._at("NL") and self._at_after_nl("PIPE"):
             self._skip_nl()
