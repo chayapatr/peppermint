@@ -1,13 +1,9 @@
 import pytest
-from lark import Lark
-from pathlib import Path
-
-GRAMMAR = (Path(__file__).parent.parent / "peppermint" / "grammar.lark").read_text()
-parser = Lark(GRAMMAR, parser="earley", start="program")
+from peppermint.parser import parse as _parse, _normalize
 
 
 def parse(src: str):
-    return parser.parse(src.strip() + "\n")
+    _parse(_normalize(src.strip() + "\n"))
 
 
 def ok(src: str):
@@ -132,12 +128,6 @@ def test_spread_ident():    ok("...row")
 def test_spread_field():    ok("...it.data")
 
 
-# --- Tuple ---
-
-def test_tuple():           ok("(a, b)")
-def test_tuple_three():     ok("(a, b, c)")
-
-
 # --- Match ---
 
 def test_match_simple():
@@ -164,14 +154,6 @@ match(result,
 )
 """)
 
-def test_match_tuple():
-    ok("""
-match((it.age, it.income),
-  (> 30, > 50000): "senior high",
-  (> 30, _): "senior low",
-  _: "other"
-)
-""")
 
 def test_match_multiline():
     ok("""

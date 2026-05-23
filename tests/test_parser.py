@@ -208,10 +208,6 @@ def test_range():
     assert node.start == 2
     assert node.end == 8
 
-def test_tuple_lit():
-    node = expr("(a, b)")
-    assert isinstance(node, TupleLit)
-    assert len(node.items) == 2
 
 
 # --- Match ---
@@ -237,10 +233,6 @@ def test_match_result():
     assert isinstance(node.arms[1].pattern, PatErr)
     assert node.arms[1].pattern.name == "msg"
 
-def test_match_tuple_pattern():
-    node = expr('match((it.age, it.income), (> 30, > 50000): "senior high", _: "other")')
-    assert isinstance(node.arms[0].pattern, PatTuple)
-    assert len(node.arms[0].pattern.patterns) == 2
 
 
 # --- Group block ---

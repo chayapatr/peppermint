@@ -11,11 +11,21 @@ class _ContPipe:
     steps: list
 
 _GRAMMAR = (Path(__file__).parent / "grammar.lark").read_text()
-_parser = Lark(_GRAMMAR, parser="earley", start="program", propagate_positions=True, ambiguity="resolve")
+_parser = Lark(_GRAMMAR, parser="lalr", start="program", propagate_positions=True)
+
+import re as _re
+_NL_PIPE = _re.compile(r'[\n;]+([ \t]*)\|>')
+
+def _normalize(src: str) -> str:
+    """Remove newlines immediately before |> so cont-pipe works in paren bodies."""
+    return _NL_PIPE.sub(r' \1|>', src)
 
 
 def parse(src: str) -> Program:
-    tree = _parser.parse(src if src.endswith("\n") else src + "\n")
+    src = _normalize(src)
+    if not src.endswith("\n"):
+        src += "\n"
+    tree = _parser.parse(src)
     return PeppermintTransformer().transform(tree)
 
 
@@ -134,6 +144,36 @@ class PeppermintTransformer(Transformer):
             return items[0]
         return Block(stmts=items)
 
+    def params(self, items):
+        return [str(t) for t in items if isinstance(t, Token) and t.type == "NAME"]
+
+    def paren_more(self, items):
+        return items  # pass children up; paren_body flattens them
+
+    def paren_body(self, items):
+        stmts = []
+        for item in items:
+            if item is None:
+                continue
+            if isinstance(item, list):
+                stmts.extend(i for i in item if i is not None)
+            else:
+                stmts.append(item)
+        if len(stmts) == 1:
+            return stmts[0]
+        return Block(stmts=stmts)
+
+    def paren_item(self, items):
+        # items: expr followed by optional pipe steps
+        source = items[0]
+        extra = [i for i in items[1:] if isinstance(i, PipeStep)]
+        if not extra:
+            return source
+        if isinstance(source, Pipe):
+            source.steps.extend(extra)
+            return source
+        return Pipe(steps=[source] + extra)
+
     # --- Statements ---
 
     def assign(self, items):
@@ -211,8 +251,9 @@ class PeppermintTransformer(Transformer):
         return TupleLit(items=list(items))
 
     def range_expr(self, items):
-        start_tok, end_tok = items
-        return Range(start=int(start_tok), end=int(end_tok), loc=_tok_loc(start_tok))
+        tok = items[0]
+        start, end = str(tok).split("..")
+        return Range(start=int(start), end=int(end), loc=_tok_loc(tok))
 
     def spread_expr(self, items):
         return Spread(obj=items[0])
@@ -301,18 +342,24 @@ class PeppermintTransformer(Transformer):
 
     # --- Lambda ---
 
-    def lambda_expr(self, items):
+    def _extract_params(self, items):
+        """Extract params list and body from lambda items."""
         body = items[-1]
-        params = [str(t) for t in items[:-1] if isinstance(t, Token) and t.type not in ("ARROW",)]
+        non_arrow = [i for i in items[:-1] if not (isinstance(i, Token) and i.type == "ARROW")]
+        if non_arrow and isinstance(non_arrow[0], list):
+            return non_arrow[0], body
+        return [str(t) for t in non_arrow if isinstance(t, Token) and t.type == "NAME"], body
+
+    def lambda_expr(self, items):
+        params, body = self._extract_params(items)
         return Lambda(params=params, body=body)
 
     def lambda_expr_noargs(self, items):
-        body = [i for i in items if not (isinstance(i, Token) and i.type == "ARROW")]
+        body = [i for i in items if not isinstance(i, Token)]
         return Lambda(params=[], body=body[0])
 
     def lambda_body(self, items):
-        body = items[-1]
-        params = [str(t) for t in items[:-1] if isinstance(t, Token) and t.type not in ("ARROW",)]
+        params, body = self._extract_params(items)
         return Lambda(params=params, body=body)
 
     def lambda_body_noargs(self, items):

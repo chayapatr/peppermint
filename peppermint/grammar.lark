@@ -1,10 +1,9 @@
 // Peppermint grammar
-// Newlines inside ( ) [ ] { } are always ignored — JS-style.
-// Newlines at statement level are significant (they terminate statements).
+// Newlines inside ( ) [ ] { } are ignored — JS-style.
+// Newlines at statement level terminate statements.
+// No tuple literals — (a, b) is only valid as call args or lambda params.
 
-program: (_NEWLINE | _SEMI | statement)*
-
-_SEMI: ";"
+program: (_NL | statement)*
 
 statement: assign
          | use_decl
@@ -12,7 +11,6 @@ statement: assign
          | expr
          | cont_pipe
 
-// A continuation pipe: starts with |> and attaches to previous statement
 cont_pipe: ("|>" pipe_step)+
 
 assign: NAME "=" expr
@@ -26,16 +24,16 @@ ns_decl: "ns" NAME "{" (_NL | assign)* "}"
 
 ARROW: "->"
 
-// Lambda params: trailing NL absorbed after each NAME, before ")" or ","
-_lambda_params: NAME (_NL* "," _NL* NAME)*
-
 ?lambda_expr: pipe_expr
-            | NAME ARROW expr                                                         -> lambda_expr
-            | "(" _NL* _lambda_params _NL* ")" ARROW expr                            -> lambda_expr
-            | "(" _NL* ")" ARROW expr                                                 -> lambda_expr_noargs
-            | NAME ARROW "(" _NL* paren_expr _NL* ")"                               -> lambda_body
-            | "(" _NL* _lambda_params _NL* ")" ARROW "(" _NL* paren_expr _NL* ")"   -> lambda_body
-            | "(" _NL* ")" ARROW "(" _NL* paren_expr _NL* ")"                       -> lambda_body_noargs
+            | NAME ARROW expr                                                    -> lambda_expr
+            | "(" params ")" ARROW expr                                         -> lambda_expr
+            | "(" ")" ARROW expr                                                -> lambda_expr_noargs
+            | NAME ARROW "(" paren_body ")"                                     -> lambda_body
+            | "(" params ")" ARROW "(" paren_body ")"                          -> lambda_body
+            | "(" ")" ARROW "(" paren_body ")"                                 -> lambda_body_noargs
+
+// Comma-separated parameter names for lambda definitions (2+ names)
+params: NAME "," _NL* NAME ("," _NL* NAME)*
 
 ?pipe_expr: cmp_expr
           | pipe_expr "|>" pipe_step
@@ -56,12 +54,12 @@ QUIET: "quiet"
          | add_expr MINUS mul_expr -> binop
 
 ?mul_expr: unary_expr
-         | mul_expr STAR  unary_expr  -> binop
-         | mul_expr SLASH unary_expr  -> binop
-         | mul_expr MOD   unary_expr  -> binop
+         | mul_expr STAR  unary_expr -> binop
+         | mul_expr SLASH unary_expr -> binop
+         | mul_expr MOD   unary_expr -> binop
 
 ?unary_expr: postfix
-           | MINUS postfix  -> neg
+           | MINUS postfix -> neg
 
 GT:    ">"
 LT:    "<"
@@ -75,53 +73,63 @@ STAR:  "*"
 SLASH: "/"
 MOD:   "%"
 
-// Postfix: field access and calls, left-associative
+// Postfix: field access and calls — left-associative
 ?postfix: atom
-        | postfix "." NAME                         -> field_access
-        | postfix "(" _NL* arglist? _NL* ")"       -> call_expr
-        | postfix "(" _NL* arglist? _NL* ")" block -> call_with_block
+        | postfix "." NAME                      -> field_access
+        | postfix "(" _NL* ")"                  -> call_expr
+        | postfix "(" arglist ")"               -> call_expr
+        | postfix "(" _NL* ")" block            -> call_with_block
+        | postfix "(" arglist ")" block         -> call_with_block
 
-// Atom: base expressions
-?atom: NAME                                              -> ident
-     | INT                                               -> int_lit
-     | FLOAT                                             -> float_lit
-     | ESCAPED_STRING                                    -> str_lit
-     | "true"                                            -> true_lit
-     | "false"                                           -> false_lit
-     | "none"                                            -> none_lit
+// Atom: base expressions — no tuple literals
+?atom: NAME                   -> ident
+     | INT                    -> int_lit
+     | FLOAT                  -> float_lit
+     | ESCAPED_STRING         -> str_lit
+     | "true"                 -> true_lit
+     | "false"                -> false_lit
+     | "none"                 -> none_lit
      | "(" _NL* expr _NL* ")"
-     | tuple_lit
-     | "(" _NL* expr (_NL+ expr)+ _NL* ")"              -> seq_expr
+     | "(" _NL* paren_seq _NL* ")"
      | list_lit
      | obj_lit
      | match_expr
      | range_expr
      | spread_expr
 
-// paren_expr: sequence of exprs separated by NL/; with optional pipe continuations
-paren_expr: paren_stmt (_NL+ paren_stmt)* -> paren_seq
-paren_stmt: expr (_NL* "|>" pipe_step)*   -> paren_pipe
+// paren_seq: multiple expressions separated by newlines inside parens
+paren_seq: expr (_NL+ expr)+          -> seq_expr
 
 spread_expr: "..." postfix
 
-range_expr: INT ".." INT
+range_expr: INT_RANGE
+INT_RANGE.2: /\d+\.\.\d+/
 
-list_lit: "[" _NL* (expr (_NL* "," _NL* expr)* ","?)? _NL* "]"
+list_lit: "[" _NL* "]"
+        | "[" _NL* expr (_NL* "," _NL* expr)* ","? _NL* "]"
 
-obj_lit: "{" _NL* (obj_entry ("," _NL* obj_entry)* ","?)? _NL* "}"
+obj_lit: "{" _NL* "}"
+       | "{" _NL* obj_entry (_NL* "," _NL* obj_entry)* ","? _NL* "}"
 obj_entry: "..." postfix  -> obj_spread
          | NAME ":" expr  -> obj_field
          | NAME            -> obj_shorthand
 
-// Block: sub-pipe steps inside { }
 block: "{" _NL* ("|>" pipe_step _NL*)+ "}"
 
-arglist: arg ("," _NL* arg)* ","?
+arglist: _NL* arg ("," _NL* arg)* ","? _NL*
 arg: NAME ":" _NL* expr  -> kwarg
    | expr                 -> posarg
 
-// Match — newlines allowed freely inside ( )
-match_expr: "match" "(" _NL* expr _NL* "," _NL* match_arm ("," _NL* match_arm)* ","? _NL* ")"
+// paren_body: right-recursive so LALR can commit without lookahead
+// Each paren_more is another _NL-separated item; trailing _NL absorbed by paren_more
+paren_body: _NL? paren_item paren_more
+paren_more: _NL paren_item paren_more
+           | _NL
+           |
+paren_item: expr ("|>" pipe_step)*
+
+// Match
+match_expr: "match" "(" _NL* expr _NL* "," _NL* match_arm (_NL* "," _NL* match_arm)* ","? _NL* ")"
 match_arm: pattern ":" expr
 
 pattern: ">"  pat_val  -> pat_gt
@@ -130,20 +138,15 @@ pattern: ">"  pat_val  -> pat_gt
        | "<=" pat_val  -> pat_lte
        | "==" pat_val  -> pat_eq
        | "!=" pat_val  -> pat_neq
-       | "Ok"  "(" NAME ")"                          -> pat_ok
-       | "Err" "(" NAME ")"                          -> pat_err
-       | "(" pattern ("," _NL* pattern)+ ")"         -> pat_tuple
-       | "_"                                         -> pat_wildcard
+       | "Ok"  "(" NAME ")"  -> pat_ok
+       | "Err" "(" NAME ")"  -> pat_err
+       | "_"               -> pat_wildcard
 
 pat_val: INT | FLOAT | ESCAPED_STRING | NAME
 literal: INT | FLOAT | ESCAPED_STRING
 
-tuple_lit.-1: "(" _NL* expr ("," _NL* expr)+ _NL* ")"
-
-// _NL: silent newline/semicolon — ignored inside brackets
-_NL: NEWLINE | ";"
-
 // Terminals
+_NL: /[\n;]+/
 NAME: /(?!(true|false|none|ns|use|as|quiet)\b)[a-zA-Z_][a-zA-Z0-9_]*/
 
 %import common.INT
@@ -152,6 +155,5 @@ NAME: /(?!(true|false|none|ns|use|as|quiet)\b)[a-zA-Z_][a-zA-Z0-9_]*/
 %import common.WS_INLINE
 %import common.NEWLINE
 
-_NEWLINE: NEWLINE
 %ignore WS_INLINE
 %ignore /#[^\n]*/

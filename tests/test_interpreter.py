@@ -225,17 +225,6 @@ data |> group(by: "cat") { |> agg(n: count()) }
     assert all("cat" in r for r in result.rows)
 
 
-# --- Tuple ---
-
-def test_tuple():
-    result = val("(1, 2, 3)")
-    assert result == (1, 2, 3)
-
-def test_tuple_match():
-    result = val('match((1, 2), (== 1, == 2): "yes", _: "no")')
-    assert result == "yes"
-
-
 # --- Ok / Err propagation ---
 
 def test_pipe_short_circuits_on_err():
