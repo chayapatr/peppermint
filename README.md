@@ -1,6 +1,6 @@
 # Peppermint
 
-A pipe-first language for data and ML work. Every operation is a pipeline step. Errors propagate automatically. The transform is the notation.
+A pipe-first language for data and ML work, running on top of Python. Every operation is a pipeline step and errors propagate automatically. The Python ecosystem (pandas, scikit-learn, or your own code) is accessible from within the language.
 
 ## Install
 
