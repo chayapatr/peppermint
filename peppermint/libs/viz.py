@@ -6,7 +6,7 @@ import os
 import tempfile
 import subprocess
 import platform
-from ..bridge import ok, err, get_rows, to_python
+from ..bridge import ok, err, get_rows, pep_fn
 from ..stdlib.core import pep_signature
 
 
@@ -37,8 +37,9 @@ def _to_df(data):
     return pd.DataFrame(get_rows(data))
 
 
+@pep_fn
 @pep_signature('viz.scatter(x: str, y: str, color?: str, label?: str, display?: List<str>) -> List<Row>')
-def scatter(data, x=None, y=None, color=None, label=None, title=None, display=None, _interp=None, _env=None, **_):
+def scatter(data, x=None, y=None, color=None, label=None, title=None, display=None):
     """Scatter plot. `display` controls what's shown: "axes", "labels", "legend", "title"."""
     try:
         import matplotlib
@@ -46,13 +47,7 @@ def scatter(data, x=None, y=None, color=None, label=None, title=None, display=No
         import matplotlib.pyplot as plt
         _setup_font()
 
-        from ..bridge import to_python as _ev
-        x       = _ev(x)       if not isinstance(x,     str)  else x
-        y       = _ev(y)       if not isinstance(y,     str)  else y
-        color   = _ev(color)   if color   is not None and not isinstance(color,   str) else color
-        label   = _ev(label)   if label   is not None and not isinstance(label,   str) else label
-        title   = _ev(title)   if title   is not None and not isinstance(title,   str) else title
-        display = _ev(display) if display is not None and not isinstance(display, list) else (display or [])
+        display = display or []
         show = set(display)
 
         df = _to_df(data)
@@ -90,15 +85,14 @@ def scatter(data, x=None, y=None, color=None, label=None, title=None, display=No
         return err(str(e))
 
 
+@pep_fn
 @pep_signature("viz.histogram(col: str) -> List<Row>")
-def histogram(data, col=None, **_):
+def histogram(data, col=None):
     """Histogram of a column."""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
-
-        col = to_python(col) if not isinstance(col, str) else col
         df = _to_df(data)
         fig, ax = plt.subplots()
         ax.hist(df[col].dropna(), bins="auto", edgecolor="black")

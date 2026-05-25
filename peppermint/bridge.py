@@ -158,3 +158,52 @@ def wrap(fn: Callable) -> Callable:
 def wrap_lib(fns: dict) -> dict:
     """Wrap a dict of plain Python functions for use in Peppermint."""
     return {name: wrap(fn) for name, fn in fns.items()}
+
+
+def pep_fn(fn: Callable) -> Callable:
+    """Decorator for lib functions: auto-evaluates all named args before the function body runs.
+
+    The decorated function receives plain Python values — no _interp/_env/_eval_arg boilerplate.
+    Exceptions are caught and returned as Err. The first positional arg (data/text) is passed as-is.
+
+    Usage::
+
+        @pep_fn
+        @pep_signature("ml.embed(text: str, ...) -> List<Num>")
+        def embed(text, source=None, model=None, apikey=None):
+            ...
+    """
+    import inspect
+    sig = inspect.signature(fn)
+    param_names = [
+        p for p in sig.parameters
+        if not p.startswith("_") and p not in ("data",)
+    ]
+
+    @functools.wraps(fn)
+    def wrapper(*args, _interp=None, _env=None, **kwargs):
+        def _ev(val):
+            if _interp is None or val is None:
+                return val
+            if isinstance(val, (int, float, str, bool, list)):
+                return val
+            try:
+                from .interpreter import PmRange
+                if isinstance(val, PmRange):
+                    return val
+            except ImportError:
+                pass
+            try:
+                return _interp.eval(val, _env)
+            except Exception:
+                return val
+
+        evaluated_kwargs = {k: _ev(v) for k, v in kwargs.items()}
+        try:
+            return fn(*args, **evaluated_kwargs)
+        except Exception as e:
+            Ok, Err = _interp_types()
+            return Err(str(e))
+
+    wrapper._pep_fn = True
+    return wrapper

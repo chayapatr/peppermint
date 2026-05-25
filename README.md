@@ -1,13 +1,13 @@
 # Peppermint
 
-A pipe-first language for data and ML work, running on top of Python. Every operation is a pipeline step and errors propagate automatically.
+A pipe-first language for data and ML work, running on top of Python. Every operation is a pipeline step and errors propagate automatically. The Python ecosystem (pandas, scikit-learn, or your own code) is accessible from within the language.
 
 ## Install
 
 ```sh
 pip install peppermint-lang
-pip install peppermint-lang[lsp]   # + language server
 pip install peppermint-lang[ml]    # + scikit-learn, umap, openai
+pip install peppermint-lang[lsp]   # + language server
 pip install peppermint-lang[all]   # everything
 ```
 
@@ -142,4 +142,4 @@ command = "pep"
 args = ["lsp"]
 ```
 
-See [docs/ecosystem.md](docs/ecosystem.md) for full editor setup and [docs/language.md](docs/language.md) for the complete language reference.
+See [docs/language.md](docs/language.md) for the language reference, [docs/stdlib.md](docs/stdlib.md) for all stdlib functions, and [docs/ecosystem.md](docs/ecosystem.md) for full editor setup.

@@ -8,6 +8,15 @@
 - `map(concurrent: N)` : same for `map`
 - `mapi(concurrent: N)` : same for `mapi`
 
+### math
+
+- Added `math.min`, `math.max`, `math.sum`, `math.median`, `math.clamp(x, lo, hi)`, `math.pow(x, exp)`
+
+### Bridge
+
+- `@pep_fn` decorator for lib functions: auto-evaluates all named args, catches exceptions as `Err` — eliminates `_eval_arg` boilerplate when writing libs
+- `ml` and `viz` refactored to use `@pep_fn`
+
 ### ml (breaking)
 
 - `ml.umap` output columns renamed from `out1`/`out2` to `out_1`/`out_2` for consistency (e.g. `umap_1`, `umap_2`)

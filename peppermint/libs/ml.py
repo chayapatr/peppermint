@@ -3,7 +3,7 @@ Peppermint ml stdlib — uses bridge for type conversion.
 Python functions receive plain list[dict], return plain list[dict].
 """
 from __future__ import annotations
-from ..bridge import ok, err, get_rows, from_python, to_python
+from ..bridge import ok, err, get_rows, pep_fn
 from ..stdlib.core import pep_signature
 
 
@@ -13,8 +13,7 @@ def _to_df(data):
 
 
 def _from_df(df):
-    rows = df.to_dict(orient="records")
-    return rows
+    return df.to_dict(orient="records")
 
 
 def _numeric_cols(df):
@@ -22,200 +21,164 @@ def _numeric_cols(df):
     return df.select_dtypes(include=[np.number]).columns.tolist()
 
 
-def _eval_arg(arg, interp, env):
-    from ..interpreter import PmRange
-    if interp and arg is not None and not isinstance(arg, (int, float, str, bool, PmRange)):
-        try:
-            return interp.eval(arg, env)
-        except Exception:
-            return arg
-    return arg
-
-
+@pep_fn
 @pep_signature("ml.kmeans(k: Int | Range, on: str, out: str) -> List<Row>")
-def kmeans(data, k=None, on=None, out=None, _interp=None, _env=None, **_):
+def kmeans(data, k=None, on=None, out=None):
     """K-means clustering. `k` accepts a range for auto-selection by silhouette score."""
-    try:
-        import numpy as np
-        from sklearn.cluster import KMeans
-        from sklearn.metrics import silhouette_score
-        from ..interpreter import PmRange
-        import sys
+    import numpy as np
+    from sklearn.cluster import KMeans
+    from sklearn.metrics import silhouette_score
+    from ..interpreter import PmRange
+    import sys
 
-        k   = _eval_arg(k,   _interp, _env)
-        on  = _eval_arg(on,  _interp, _env)
-        out = _eval_arg(out, _interp, _env)
+    if k is None:
+        return err("kmeans: k is required")
+    if out is None:
+        return err("kmeans: out is required")
 
-        if k is None:
-            return err("kmeans: k is required")
-        if out is None:
-            return err("kmeans: out is required")
+    df = _to_df(data)
 
-        df = _to_df(data)
+    if on is not None:
+        X = np.stack(df[on].tolist())
+        idx = df.index
+    else:
+        num_cols = _numeric_cols(df)
+        sub = df[num_cols].dropna()
+        X = sub.values
+        idx = sub.index
 
-        if on is not None:
-            X = np.stack(df[on].tolist())
-            idx = df.index
-        else:
-            num_cols = _numeric_cols(df)
-            sub = df[num_cols].dropna()
-            X = sub.values
-            idx = sub.index
-
-        if isinstance(k, PmRange):
-            best_k, best_score, best_labels = None, -1, None
-            for ki in range(k.start, k.end + 1):
-                model = KMeans(n_clusters=ki, random_state=42, n_init="auto")
-                labels = model.fit_predict(X)
-                if len(set(labels)) > 1:
-                    s = silhouette_score(X, labels)
-                    if s > best_score:
-                        best_k, best_score, best_labels = ki, s, labels
-            labels = best_labels
-            print(f"kmeans: best k={best_k}, silhouette={best_score:.3f}", file=sys.stderr)
-        else:
-            model = KMeans(n_clusters=int(k), random_state=42, n_init="auto")
+    if isinstance(k, PmRange):
+        best_k, best_score, best_labels = None, -1, None
+        for ki in range(k.start, k.end + 1):
+            model = KMeans(n_clusters=ki, random_state=42, n_init="auto")
             labels = model.fit_predict(X)
+            if len(set(labels)) > 1:
+                s = silhouette_score(X, labels)
+                if s > best_score:
+                    best_k, best_score, best_labels = ki, s, labels
+        labels = best_labels
+        print(f"kmeans: best k={best_k}, silhouette={best_score:.3f}", file=sys.stderr)
+    else:
+        model = KMeans(n_clusters=int(k), random_state=42, n_init="auto")
+        labels = model.fit_predict(X)
 
-        df = df.copy()
-        df.loc[idx, out] = labels.astype(int)
-        return ok(_from_df(df))
-    except Exception as e:
-        return err(str(e))
+    df = df.copy()
+    df.loc[idx, out] = labels.astype(int)
+    return ok(_from_df(df))
 
 
+@pep_fn
 @pep_signature("ml.ols(on: str, out: str) -> List<Row>")
-def ols(data, on=None, out=None, _interp=None, _env=None, **_):
+def ols(data, on=None, out=None):
     """OLS regression. Adds predicted and residual columns. Prints R² to stderr."""
-    try:
-        from sklearn.linear_model import LinearRegression
+    from sklearn.linear_model import LinearRegression
+    import sys
 
-        on  = _eval_arg(on,  _interp, _env)
-        out = _eval_arg(out, _interp, _env)
+    if on is None:
+        return err("ols: on is required (target column)")
+    if out is None:
+        return err("ols: out is required")
 
-        if on is None:
-            return err("ols: on is required (target column)")
-        if out is None:
-            return err("ols: out is required")
+    df = _to_df(data)
+    num_cols = [c for c in _numeric_cols(df) if c != on]
+    X = df[num_cols].dropna()
+    y = df.loc[X.index, on]
 
-        df = _to_df(data)
-        num_cols = [c for c in _numeric_cols(df) if c != on]
-        X = df[num_cols].dropna()
-        y = df.loc[X.index, on]
-
-        import sys
-        model = LinearRegression()
-        model.fit(X, y)
-        predicted = model.predict(X)
-        r2 = model.score(X, y)
-        coeffs = dict(zip(num_cols, model.coef_))
-        print(f"ols: R²={r2:.4f}  intercept={model.intercept_:.4f}", file=sys.stderr)
-        for col, coef in coeffs.items():
-            print(f"     {col}: {coef:.4f}", file=sys.stderr)
-        df = df.copy()
-        df.loc[X.index, out] = predicted
-        df.loc[X.index, "residual"] = y.values - predicted
-        return ok(_from_df(df))
-    except Exception as e:
-        return err(str(e))
+    model = LinearRegression()
+    model.fit(X, y)
+    predicted = model.predict(X)
+    r2 = model.score(X, y)
+    coeffs = dict(zip(num_cols, model.coef_))
+    print(f"ols: R²={r2:.4f}  intercept={model.intercept_:.4f}", file=sys.stderr)
+    for col, coef in coeffs.items():
+        print(f"     {col}: {coef:.4f}", file=sys.stderr)
+    df = df.copy()
+    df.loc[X.index, out] = predicted
+    df.loc[X.index, "residual"] = y.values - predicted
+    return ok(_from_df(df))
 
 
+@pep_fn
 @pep_signature("ml.umap(dims: Int, on: str, out: str | List<str>) -> List<Row>")
-def umap(data, dims=2, on=None, out=None, _interp=None, _env=None, **_):
+def umap(data, dims=2, on=None, out=None):
     """Dimensionality reduction. `out: \"umap\"` adds `umap_1`, `umap_2`, ... columns. `out: [\"x\", \"y\"]` uses explicit names (length must match `dims`)."""
-    try:
-        import numpy as np
-        import umap as umap_lib
+    import numpy as np
+    import umap as umap_lib
 
-        dims = int(_eval_arg(dims, _interp, _env))
-        on   = _eval_arg(on,  _interp, _env)
-        out  = _eval_arg(out, _interp, _env)
+    dims = int(dims)
 
-        if out is None:
-            return err("umap: out is required")
+    if out is None:
+        return err("umap: out is required")
 
-        df = _to_df(data)
+    df = _to_df(data)
 
-        if on is not None:
-            X   = np.stack(df[on].tolist())
-            idx = df.index
-        else:
-            num_cols = _numeric_cols(df)
-            sub = df[num_cols].dropna()
-            X   = sub.values
-            idx = sub.index
+    if on is not None:
+        X   = np.stack(df[on].tolist())
+        idx = df.index
+    else:
+        num_cols = _numeric_cols(df)
+        sub = df[num_cols].dropna()
+        X   = sub.values
+        idx = sub.index
 
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            reducer = umap_lib.UMAP(n_components=dims, random_state=42)
-            embedding = reducer.fit_transform(X)
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        reducer = umap_lib.UMAP(n_components=dims, random_state=42)
+        embedding = reducer.fit_transform(X)
 
-        df = df.copy()
-        if isinstance(out, list):
-            if len(out) != dims:
-                return err(f"umap: out has {len(out)} names but dims={dims}")
-            for i, col in enumerate(out):
-                df.loc[idx, col] = embedding[:, i]
-        else:
-            for i in range(dims):
-                df.loc[idx, f"{out}_{i+1}"] = embedding[:, i]
-        return ok(_from_df(df))
-    except Exception as e:
-        return err(str(e))
+    df = df.copy()
+    if isinstance(out, list):
+        if len(out) != dims:
+            return err(f"umap: out has {len(out)} names but dims={dims}")
+        for i, col in enumerate(out):
+            df.loc[idx, col] = embedding[:, i]
+    else:
+        for i in range(dims):
+            df.loc[idx, f"{out}_{i+1}"] = embedding[:, i]
+    return ok(_from_df(df))
 
 
+@pep_fn
 @pep_signature("ml.embed(text: str, source: str, model: str, apikey: str) -> List<Num>")
-def embed(text, source=None, model=None, apikey=None, _interp=None, _env=None, **_):
+def embed(text, source=None, model=None, apikey=None):
     """Embed a single text string. Use inside `add`: `add(embedding: ml.embed(it.name, ...))`."""
-    try:
-        text   = _eval_arg(text,   _interp, _env)
-        source = _eval_arg(source, _interp, _env)
-        model  = _eval_arg(model,  _interp, _env)
-        apikey = _eval_arg(apikey, _interp, _env)
+    if source is None:
+        return err("embed: source is required (e.g. source: \"deepinfra\" or source: \"local\")")
+    if model is None:
+        return err("embed: model is required")
 
-        if source is None:
-            return err("embed: source is required (e.g. source: \"deepinfra\" or source: \"local\")")
-        if model is None:
-            return err("embed: model is required")
-
-        if source == "deepinfra":
-            if apikey is None:
-                return err("embed: apikey is required for source 'deepinfra'")
-            from openai import OpenAI
-            client = OpenAI(api_key=apikey, base_url="https://api.deepinfra.com/v1/openai")
-            resp = client.embeddings.create(model=model, input=[text], encoding_format="float")
-            return resp.data[0].embedding
-        elif source == "local":
-            from sentence_transformers import SentenceTransformer
-            return SentenceTransformer(model).encode([text])[0].tolist()
-        else:
-            return err(f"embed: unknown source '{source}' (use 'deepinfra' or 'local')")
-    except Exception as e:
-        return err(str(e))
+    if source == "deepinfra":
+        if apikey is None:
+            return err("embed: apikey is required for source 'deepinfra'")
+        from openai import OpenAI
+        client = OpenAI(api_key=apikey, base_url="https://api.deepinfra.com/v1/openai")
+        resp = client.embeddings.create(model=model, input=[text], encoding_format="float")
+        return resp.data[0].embedding
+    elif source == "local":
+        from sentence_transformers import SentenceTransformer
+        return SentenceTransformer(model).encode([text])[0].tolist()
+    else:
+        return err(f"embed: unknown source '{source}' (use 'deepinfra' or 'local')")
 
 
+@pep_fn
 @pep_signature("ml.silhouette(on: str) -> List<Row>")
-def silhouette(data, on=None, _interp=None, _env=None, **_):
+def silhouette(data, on=None):
     """Score current clustering. Prints silhouette score to stderr."""
-    try:
-        from sklearn.metrics import silhouette_score
-        import sys
+    from sklearn.metrics import silhouette_score
+    import sys
 
-        on = _eval_arg(on, _interp, _env)
+    if on is None:
+        return err("silhouette: on is required (cluster column)")
 
-        if on is None:
-            return err("silhouette: on is required (cluster column)")
-
-        df = _to_df(data)
-        num_cols = [c for c in _numeric_cols(df) if c != on]
-        X = df[num_cols].dropna()
-        labels = df.loc[X.index, on]
-        score = silhouette_score(X, labels)
-        print(f"silhouette score: {score:.4f}", file=sys.stderr)
-        return ok(data)
-    except Exception as e:
-        return err(str(e))
+    df = _to_df(data)
+    num_cols = [c for c in _numeric_cols(df) if c != on]
+    X = df[num_cols].dropna()
+    labels = df.loc[X.index, on]
+    score = silhouette_score(X, labels)
+    print(f"silhouette score: {score:.4f}", file=sys.stderr)
+    return ok(data)
 
 
 def build_ml_env() -> dict:
