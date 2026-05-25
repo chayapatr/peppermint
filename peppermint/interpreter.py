@@ -58,6 +58,18 @@ class PmRange:
     start: int
     end: int
 
+@dataclass
+class ColRef:
+    """Reference to a column across all rows — produced by col.field."""
+    field: str
+    def __repr__(self): return f"col.{self.field}"
+
+class _ColProxy:
+    """Sentinel object bound to 'col' in the global env."""
+    def __getattr__(self, field: str) -> ColRef:
+        return ColRef(field)
+    def __repr__(self): return "col"
+
 
 # --- Environment ---
 
@@ -200,6 +212,8 @@ class Interpreter:
         obj = self.eval(node.obj, env)
         if isinstance(obj, Ok):
             obj = obj.value
+        if isinstance(obj, _ColProxy):
+            return ColRef(node.field)
         if isinstance(obj, dict):
             if node.field not in obj:
                 available = ", ".join(obj.keys())

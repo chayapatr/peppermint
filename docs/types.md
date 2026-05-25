@@ -7,6 +7,7 @@ Type = Scalar
      | List<Type>
      | Object<{ label: Type, ... }>
      | Result<Type>
+     | ColRef<label>
      | Fn<Type... → Type>
      | None
 
@@ -76,6 +77,19 @@ filter(row -> row.age > 18)
 
 ---
 
+## `col.field`
+
+`col.field` produces a `ColRef<label>` — a reference to a column across all rows. It is passive: it names a column but does not compute anything. Functions act on it.
+
+```
+col.salary   : ColRef<"salary">
+col.amount   : ColRef<"amount">
+```
+
+`ColRef` is only meaningful inside column-level functions (`mean`, `sum`, `rank`, `rolling`, etc.) and inside `collapse`. Using it elsewhere has no effect.
+
+---
+
 ## match
 
 ```
@@ -88,7 +102,7 @@ Patterns:
 
 ```
 > n   < n   >= n   <= n   == n   != n    -- comparison (Scalar)
-7   "x"   true   false                  -- bare literal, shorthand for == value
+7   "x"   true   false   none           -- bare literal, shorthand for == value
 Ok(x)   Err(x)                           -- Result destructure
 _                                        -- wildcard, always matches
 ```
@@ -161,15 +175,12 @@ mapi : List<a> → ({idx: Int, value: a} → b) → List<b>
 
 `mapi` passes `{idx, value}` as `it` — useful when you need the index alongside the element.
 
-Output type follows the return value of the transform.
-
 ### Filterable
 
 ```
 filter : List<a> → (a → Bool) → List<a>
+take   : List<a> → Int        → List<a>
 ```
-
-Works on any list. Preserves element type.
 
 ### Foldable
 
@@ -209,9 +220,7 @@ select : List<Object<S>> → label...               → List<Object<S ∩ {label
 rename : List<Object<S>> → (old: new)             → List<Object<S[old→new]>>
 sort   : List<Object<S>> → by → dir               → List<Object<S>>
 join   : List<Object<S>> → List<Object<T>> → on   → List<Object<S ∪ T>>
-group  : List<Object<S>> → by → (List<Object<S>> → List<Object<T>>) → List<Object<T ∪ {by}>>
 save   : List<Object<S>> → path                   → List<Object<S>>   -- pass-through
-agg    : List<Object<S>> → (label: AggFn)...      → List<Object<{label: Scalar}>>
 ```
 
 Passing a non-object list to these raises a type error.
@@ -220,33 +229,41 @@ Passing a non-object list to these raises a type error.
 
 ## Aggregation
 
-```
-AggFn = sum(expr) | mean(expr) | count() | min(expr) | max(expr)
-```
-
-`agg` collapses a list into one row, running each `AggFn` over all elements:
+### `collapse`
 
 ```
-agg : List<Object<S>> → (label₁: AggFn, label₂: AggFn, ...) → List<Object<{label₁: Scalar, ...}>>
+collapse : List<Object<S>> → (by:?, label: AggFn)... → List<Object<{by?, label: Scalar}>>
 ```
 
-The `AggFn` constructors are typed:
+Collapses rows into a summary. `by:` is optional — omit for a single-row result, provide for one row per unique key value.
 
 ```
-sum   : (Object<S> → Scalar) → AggFn
-mean  : (Object<S> → Scalar) → AggFn
-count : ()                   → AggFn
-min   : (Object<S> → Scalar) → AggFn
-max   : (Object<S> → Scalar) → AggFn
+AggFn = sum(ColRef) | mean(ColRef) | count() | min(ColRef) | max(ColRef)
 ```
 
-Inside each expression, `it` refers to the current row — same as in `filter` and `map`.
-
-`group` + `agg` pattern:
+The `AggFn` constructors:
 
 ```
-group(by: "k") { |> agg(n: count()) }
-  ≡  List<Object<S>> → List<Object<{ k: Str, n: Int }>>
+sum   : ColRef<f> → AggFn
+mean  : ColRef<f> → AggFn
+count : ()        → AggFn
+min   : ColRef<f> → AggFn
+max   : ColRef<f> → AggFn
+```
+
+All accept an optional `by:` parameter for use inside `add` — when present, the result is a Series aligned to rows (group broadcast), not a scalar.
+
+### Column functions — for use inside `add`
+
+```
+rank    : ColRef<f> → by:? → dir:? → Series<Int>
+rolling : ColRef<f> → Int → AggFn → by:? → Series<Float>
+```
+
+When `add` receives a `Series` (from `rank`, `rolling`, or a `by:`-scoped agg), it aligns the values back onto rows by position. When it receives a scalar, it broadcasts the same value to all rows.
+
+```
+add(label: AggFn)    -- scalar or series, resolved at runtime
 ```
 
 ---
@@ -259,8 +276,6 @@ A list literal `[{...}, {...}]` where all elements are objects produces `List<Ob
 [1, 2, 3]                             -- List<Int>
 [{ name: "a" }, { name: "b" }]        -- List<Object<{ name: Str }>>
 ```
-
-The type is determined at construction — not at the call site.
 
 ---
 
@@ -320,15 +335,33 @@ Any name inside `{ }` without a `:` is shorthand for `name: name`. Can be mixed 
 
 Loaded on demand. Any `.py` file in `peppermint/libs/` is autodiscovered. User Python files loaded via `use "./file.py"` go through the bridge automatically.
 
-### ML — `use ml`
-
-Operate on `List<Object<S>>`, add columns:
+### Env — `use env`
 
 ```
-ml.embed(col)  : List<Object<S>> → List<Object<S ∪ {embedding: List<Float>}>>
-ml.kmeans(k)   : List<Object<S>> → List<Object<S ∪ {cluster: Int}>>
-ml.umap(dims)  : List<Object<S>> → List<Object<S ∪ {umap1: Float, umap2: Float, ...}>>
-ml.ols(target) : List<Object<S>> → List<Object<S ∪ {predicted: Float}>>
+env.get(key) : Str → Str | Err
+```
+
+Reads an environment variable. Returns `Err` if not set.
+
+### ML — `use ml`
+
+All functions require explicit `on:` (input column) and `out:` (output column):
+
+```
+ml.embed(on:, out:, source:, model:, apikey:)
+  : List<Object<S>> → List<Object<S ∪ {out: List<Float>}>>
+
+ml.kmeans(k:, on:, out:)
+  : List<Object<S>> → List<Object<S ∪ {out: Int}>>
+
+ml.umap(dims:, on:, out:)
+  : List<Object<S>> → List<Object<S ∪ {out1: Float, out2: Float, ...}>>
+
+ml.ols(on:, out:)
+  : List<Object<S>> → List<Object<S ∪ {out: Float, residual: Float}>>
+
+ml.silhouette(on:)
+  : List<Object<S>> → List<Object<S>>   -- pass-through, prints score to stderr
 ```
 
 ### Str — `use str`
@@ -354,5 +387,5 @@ str.slice(s, start, end) : Str → Str
 
 Python libs loaded via `use` go through `peppermint/bridge.py`:
 - `to_python` / `from_python` — convert between Peppermint and Python types
-- `get_rows`, `make_list`, `map_rows`, `add_column`, `filter_rows` — row utilities
+- `get_rows`, `map_rows`, `add_column`, `filter_rows` — row utilities
 - `ok(val)`, `err(msg)` — construct results without importing interpreter internals

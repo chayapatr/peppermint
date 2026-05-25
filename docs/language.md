@@ -57,6 +57,20 @@ Inside any pipe step, `it` refers to the current row:
 
 ---
 
+## `col.field`
+
+`col.field` refers to a field across all rows as a column. Used in aggregation and column-level functions:
+
+```
+|> collapse(avg: mean(col.salary))
+|> add(dept_avg: mean(col.salary, by: "dept"))
+|> add(rank: rank(col.salary, dir: "desc"))
+```
+
+`col` is passive — it is a reference, not a computation. Functions (`mean`, `rank`, `rolling`) act on it.
+
+---
+
 ## match
 
 The only branching construct. Always returns a value:
@@ -195,6 +209,7 @@ Import stdlib libs or external files with `use`:
 use ml
 use math
 use viz
+use env
 use "./transforms.pep" as t
 use "./my_utils.py" as u     # plain Python file
 ```
@@ -269,26 +284,34 @@ lst[a..b]            # slice (inclusive)
 |---|---|
 | `load(path)` | Load CSV or JSON as list of rows |
 | `save(path)` | Write list to CSV or JSON file |
-| `filter(pred)` | Keep elements matching condition — any list |
-| `map(expr)` | Transform every element — any list |
+| `filter(pred)` | Keep elements matching condition |
+| `map(expr)` | Transform every element |
 | `reduce(init, fn)` | Fold list into a single value |
 | `add(field: expr)` | Add a new field to every row |
 | `drop(field)` | Remove a field |
 | `select(fields...)` | Keep only specified fields |
 | `rename(old: new)` | Rename a field |
 | `sort(by, dir)` | Sort rows |
-| `join(other, on)` | Join two lists on a shared key field |
-| `group(by) { }` | Group by field, run sub-pipe per group |
-| `agg(field: fn, ...)` | Aggregate into a single-row summary |
-| `sum(expr)` | Sum of field across rows — use inside `agg` |
-| `mean(expr)` | Mean of field across rows — use inside `agg` |
-| `count()` | Row count — use inside `agg` |
-| `min(expr)` | Minimum value — use inside `agg` |
-| `max(expr)` | Maximum value — use inside `agg` |
+| `take(n)` | Keep first n rows |
+| `join(other, on)` | Inner join on a shared key field |
+| `collapse(by:, ...)` | Aggregate rows, optionally grouped |
+| `sum(col.field)` | Sum of a column — use in `collapse` or `add` |
+| `mean(col.field)` | Mean of a column — use in `collapse` or `add` |
+| `count()` | Row count — use in `collapse` |
+| `min(col.field)` | Minimum — use in `collapse` or `add` |
+| `max(col.field)` | Maximum — use in `collapse` or `add` |
+| `rank(col.field, by:, dir:)` | Rank rows by a column — use in `add` |
+| `rolling(col.field, window, fn, by:)` | Rolling window — use in `add` |
 | `len(list)` | Number of elements |
 | `get(list, i)` | Element at index (prefer `list[i]`) |
 | `concat(a, b, ...)` | Concatenate lists |
 | `print(value)` | Print and pass through |
+
+### `use env`
+
+| Function | Description |
+|---|---|
+| `env.get("KEY")` | Read environment variable — returns value or `Err` |
 
 ### `use math`
 
@@ -302,20 +325,22 @@ lst[a..b]            # slice (inclusive)
 
 ### `use ml`
 
+All ml functions require `on:` (input column) and `out:` (output column) to be explicit.
+
 | Function | Description |
 |---|---|
-| `ml.kmeans(k)` | K-means clustering — adds `cluster` field |
-| `ml.umap(dims)` | Dimensionality reduction — adds `umap1`, `umap2`, ... |
-| `ml.ols(target)` | Linear regression — adds `predicted` field |
-| `ml.embed(col)` | Text embedding — adds `embedding` field |
-| `ml.silhouette()` | Score current clustering |
+| `ml.embed(on:, out:, source:, model:, apikey:)` | Text embedding — adds embedding column |
+| `ml.kmeans(k:, on:, out:)` | K-means clustering — adds cluster column; `k:` accepts a range for auto-select |
+| `ml.umap(dims:, on:, out:)` | Dimensionality reduction — `out: "umap"` adds `umap1`, `umap2`; `out: ["x","y"]` names explicitly |
+| `ml.ols(on:, out:)` | OLS regression — adds predicted and residual columns; prints R² to stderr |
+| `ml.silhouette(on:)` | Score current clustering — prints score to stderr |
 
 ### `use viz`
 
 | Function | Description |
 |---|---|
-| `viz.scatter(x, y, color?)` | Scatter plot |
-| `viz.histogram(col)` | Histogram |
+| `viz.scatter(x:, y:, color:, label:, display:)` | Scatter plot — `display:` list controls what's shown: `"axes"`, `"labels"`, `"legend"`, `"title"` |
+| `viz.histogram(col:)` | Histogram |
 | `viz.heatmap()` | Correlation heatmap |
 | `viz.plot()` | Auto-plot based on data shape |
 | `viz.grid(...)` | Multiple plots side by side |
@@ -341,26 +366,50 @@ lst[a..b]            # slice (inclusive)
 
 ## Aggregation
 
-`agg` collapses a list into a single-row summary. Pass any combination of `sum`, `mean`, `count`, `min`, `max`:
+`collapse` reduces a list to a summary. Pass any combination of `sum`, `mean`, `count`, `min`, `max` with `col.field`:
 
 ```
 load("sales.csv")
-  |> agg(total: sum(it.amount), avg: mean(it.amount), n: count())
+  |> collapse(total: sum(col.amount), avg: mean(col.amount), n: count())
   |> print()
 ```
 
-Combine with `group` to aggregate per group:
+Add `by:` to aggregate per group:
 
 ```
 load("sales.csv")
-  |> group(by: "region") {
-      |> agg(total: sum(it.amount), n: count())
-  }
+  |> collapse(by: "region", total: sum(col.amount), n: count())
   |> sort(by: "total", dir: "desc")
   |> print()
 ```
 
-`group` runs the block sub-pipe independently on each group, then merges results back with the group key attached.
+### Broadcasting back onto rows
+
+Use `mean`, `sum`, etc. inside `add` with `by:` to annotate each row with its group statistic:
+
+```
+load("employees.csv")
+  |> add(dept_avg: mean(col.salary, by: "dept"))
+  |> add(normalized: (it.salary - mean(col.salary, by: "dept")) / std(col.salary, by: "dept"))
+```
+
+### Rank within group
+
+```
+load("employees.csv")
+  |> add(rank: rank(col.salary, by: "dept", dir: "desc"))
+  |> filter(it.rank <= 2)
+  |> drop(rank)
+```
+
+### Rolling window
+
+```
+load("sales.csv")
+  |> sort(by: "date")
+  |> add(rolling_avg: rolling(col.amount, 7, mean))
+  |> add(rolling_avg_by_region: rolling(col.amount, 7, mean, by: "region"))
+```
 
 ---
 

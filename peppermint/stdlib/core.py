@@ -2,7 +2,7 @@ from __future__ import annotations
 import json
 from typing import Any
 import pandas as pd
-from ..interpreter import Ok, Err, PmFunction
+from ..interpreter import Ok, Err, PmFunction, ColRef
 
 
 def _eval_arg(arg, interp, env):
@@ -83,8 +83,23 @@ def add(data, _interp=None, _env=None, **kwargs) -> list:
     if len(non_meta) != 1:
         raise ValueError("add() requires exactly one keyword argument: the new field name")
     field, expr = next(iter(non_meta.items()))
+
+    # Evaluate the expression to check if it's a column-level operation
+    val = _unwrap(_eval_arg(expr, _interp, _env))
+    if isinstance(val, (_AggFn, _RankFn, _RollingFn)):
+        df = pd.DataFrame(_to_list(data))
+        series = val.broadcast(df)
+        rows = df.copy()
+        rows[field] = series.values
+        return rows.to_dict(orient="records")
+
     fn = _interp.make_row_fn(expr, _env)
     return [{**row, field: _unwrap(fn(row))} for row in _to_list(data)]
+
+
+def take(data, n, _interp=None, _env=None, **_) -> list:
+    n = int(_eval_arg(n, _interp, _env))
+    return _to_list(data)[:n]
 
 
 def drop(data, field, _interp=None, _env=None, **_) -> list:
@@ -127,33 +142,6 @@ def reduce(data, init, fn, _interp=None, _env=None, **_) -> Any:
     return functools.reduce(apply, items, init)
 
 
-def group(data, by=None, _block=None, _interp=None, _env=None, **_) -> list:
-    if by is None:
-        raise ValueError("group() requires 'by' argument")
-    by = _eval_arg(by, _interp, _env)
-    if _block is None:
-        raise ValueError("group() requires a block { |> ... }")
-
-    from ..ast_nodes import Pipe, Literal
-
-    groups: dict[str, list[dict]] = {}
-    for row in _to_list(data):
-        key = str(row.get(by, ""))
-        groups.setdefault(key, []).append(row)
-
-    all_rows = []
-    for key, rows in groups.items():
-        pipe = Pipe(steps=[Literal(rows)] + list(_block))
-        result = _interp.eval_pipe(pipe, _env)
-        if isinstance(result, Err):
-            return result
-        value = result.value
-        if not isinstance(value, list):
-            raise TypeError(f"group sub-pipe must produce a List, got {type(value).__name__}")
-        all_rows.extend([{by: key, **row} for row in value])
-
-    return all_rows
-
 
 def join(data, other, on=None, _interp=None, _env=None, **_) -> list:
     on = _eval_arg(on, _interp, _env)
@@ -171,40 +159,122 @@ def print_(data, _interp=None, _env=None, **_):
 # --- Aggregation ---
 
 class _AggFn:
-    def __init__(self, name, expr):
-        self.name = name
-        self.expr = expr
+    """Produced by mean(col.field), sum(col.field), etc.
+    col_ref: ColRef — the column to aggregate.
+    by: optional str — group key for broadcasting back onto rows (used in add).
+    """
+    def __init__(self, op: str, col_ref, by=None):
+        self.op = op
+        self.col_ref = col_ref  # ColRef or None (for count)
+        self.by = by
+
+    def apply(self, df: pd.DataFrame) -> Any:
+        if self.op == "count":
+            return len(df)
+        series = df[self.col_ref.field]
+        if self.op == "sum":  return series.sum()
+        if self.op == "mean": return series.mean()
+        if self.op == "min":  return series.min()
+        if self.op == "max":  return series.max()
+
+    def broadcast(self, df: pd.DataFrame) -> pd.Series:
+        """For use inside add() with by: — returns a Series aligned to df."""
+        if self.by:
+            return df.groupby(self.by)[self.col_ref.field].transform(self.op)
+        return pd.Series([self.apply(df)] * len(df), index=df.index)
 
 
-def sum_(expr=None, **_):  return _AggFn("sum", expr)
-def mean_(expr=None, **_): return _AggFn("mean", expr)
-def count_(**_):            return _AggFn("count", None)
-def min_(expr=None, **_):  return _AggFn("min", expr)
-def max_(expr=None, **_):  return _AggFn("max", expr)
+def _make_agg(op):
+    def fn(col_ref=None, by=None, **_):
+        if col_ref is None and op != "count":
+            raise ValueError(f"{op}() requires a col.field argument")
+        return _AggFn(op, col_ref, by=by)
+    fn.__name__ = op
+    fn._accepts_deferred = True
+    return fn
+
+sum_   = _make_agg("sum")
+mean_  = _make_agg("mean")
+count_ = _make_agg("count")
+min_   = _make_agg("min")
+max_   = _make_agg("max")
 
 
-def _apply_agg(fn: _AggFn, items: list, interp, env) -> Any:
-    if fn.name == "count":
-        return len(items)
-    row_fn = interp.make_row_fn(fn.expr, env)
-    vals = [_unwrap(row_fn(item)) for item in items]
-    if fn.name == "sum":  return sum(vals)
-    if fn.name == "mean": return sum(vals) / len(vals) if vals else 0
-    if fn.name == "min":  return min(vals)
-    if fn.name == "max":  return max(vals)
+def collapse(data, _interp=None, _env=None, **kwargs) -> list:
+    """Aggregate rows, optionally grouped by a field.
+
+    collapse(by: "dept", avg: mean(col.salary), n: count())
+    collapse(avg: mean(col.salary))  -- one row total
+    """
+    by = _eval_arg(kwargs.pop("by", None), _interp, _env)
+    non_meta = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+
+    df = pd.DataFrame(_to_list(data))
+
+    def _agg_group(sub_df):
+        row = {}
+        for field, expr in non_meta.items():
+            val = _unwrap(_eval_arg(expr, _interp, _env))
+            if isinstance(val, _AggFn):
+                row[field] = val.apply(sub_df)
+            else:
+                row[field] = val
+        return row
+
+    if by:
+        rows = []
+        for key, sub in df.groupby(by):
+            row = {by: key}
+            row.update(_agg_group(sub))
+            rows.append(row)
+        return rows
+    else:
+        return [_agg_group(df)]
 
 
 def agg(data, _interp=None, _env=None, **kwargs) -> list:
-    items = _to_list(data)
-    non_meta = {k: v for k, v in kwargs.items() if not k.startswith("_")}
-    result = {}
-    for field, expr in non_meta.items():
-        fn = _unwrap(_eval_arg(expr, _interp, _env))
-        if isinstance(fn, _AggFn):
-            result[field] = _apply_agg(fn, items, _interp, _env)
-        else:
-            result[field] = fn
-    return [result]
+    return collapse(data, _interp=_interp, _env=_env, **kwargs)
+
+
+class _RankFn:
+    def __init__(self, col_ref: ColRef, by=None, dir="asc"):
+        self.col_ref = col_ref
+        self.by = by
+        self.dir = dir
+
+    def broadcast(self, df: pd.DataFrame) -> pd.Series:
+        ascending = self.dir != "desc"
+        if self.by:
+            return df.groupby(self.by)[self.col_ref.field].rank(ascending=ascending, method="min").astype(int)
+        return df[self.col_ref.field].rank(ascending=ascending, method="min").astype(int)
+
+
+class _RollingFn:
+    def __init__(self, col_ref: ColRef, window: int, fn, by=None):
+        self.col_ref = col_ref
+        self.window = window
+        self.fn = fn
+        self.by = by
+
+    def broadcast(self, df: pd.DataFrame) -> pd.Series:
+        op = self.fn.__name__ if hasattr(self.fn, "__name__") else str(self.fn)
+        if self.by:
+            return df.groupby(self.by)[self.col_ref.field].transform(
+                lambda s: s.rolling(self.window).agg(op)
+            )
+        return df[self.col_ref.field].rolling(self.window).agg(op)
+
+
+def rank(col_ref, by=None, dir="asc", **_):
+    return _RankFn(col_ref, by=by, dir=dir)
+
+rank._accepts_deferred = True
+
+
+def rolling(col_ref, window, fn, by=None, **_):
+    return _RollingFn(col_ref, int(window), fn, by=by)
+
+rolling._accepts_deferred = True
 
 
 def get(data, i, _interp=None, _env=None, **_):
@@ -247,7 +317,7 @@ def concat(*args, _interp=None, _env=None, **_):
     return result
 
 
-for _fn in (filter_, map_, mapi, add, sort, reduce, group, agg, sum_, mean_, count_, min_, max_):
+for _fn in (filter_, map_, mapi, add, sort, reduce, collapse, sum_, mean_, count_, min_, max_):
     _fn._accepts_deferred = True
 
 
@@ -264,18 +334,20 @@ def build_core_env() -> dict:
         "rename": rename,
         "sort":   sort,
         "reduce": reduce,
-        "group":  group,
-        "join":   join,
-        "agg":    agg,
-        "sum":    sum_,
-        "mean":   mean_,
-        "count":  count_,
-        "min":    min_,
-        "max":    max_,
+        "join":     join,
+        "collapse": collapse,
+        "sum":      sum_,
+        "mean":     mean_,
+        "count":    count_,
+        "min":      min_,
+        "max":      max_,
         "print":  print_,
         "get":    get,
         "set":    set_,
         "len":    length,
-        "concat": concat,
-        "slice":  slice_,
+        "take":    take,
+        "rank":    rank,
+        "rolling": rolling,
+        "concat":  concat,
+        "slice":   slice_,
     }

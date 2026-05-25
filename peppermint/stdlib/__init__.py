@@ -22,7 +22,9 @@ def load_stdlib(name: str) -> dict:
 
 
 def build_global_env() -> Env:
+    from ..interpreter import _ColProxy
     env = Env()
     for name, fn in build_core_env().items():
         env.set(name, fn)
+    env.set("col", _ColProxy())
     return env

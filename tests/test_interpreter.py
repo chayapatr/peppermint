@@ -157,55 +157,49 @@ def test_pipe_err_short_circuits():
     assert isinstance(result, Err)
 
 
-# --- Aggregation ---
+# --- collapse ---
 
-def test_agg_sum():
-    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> agg(total: sum(it.v))')
+def test_collapse_sum():
+    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> collapse(total: sum(col.v))')
     assert isinstance(result, list)
     assert result[0]["total"] == 6
 
-def test_agg_mean():
-    result = val('[{ v: 10 }, { v: 20 }] |> agg(avg: mean(it.v))')
+def test_collapse_mean():
+    result = val('[{ v: 10 }, { v: 20 }] |> collapse(avg: mean(col.v))')
     assert isinstance(result, list)
     assert result[0]["avg"] == pytest.approx(15.0)
 
-def test_agg_count():
-    result = val('[{ x: 1 }, { x: 2 }, { x: 3 }] |> agg(n: count())')
+def test_collapse_count():
+    result = val('[{ x: 1 }, { x: 2 }, { x: 3 }] |> collapse(n: count())')
     assert isinstance(result, list)
     assert result[0]["n"] == 3
 
-def test_agg_min():
-    result = val('[{ v: 5 }, { v: 2 }, { v: 8 }] |> agg(lo: min(it.v))')
+def test_collapse_min():
+    result = val('[{ v: 5 }, { v: 2 }, { v: 8 }] |> collapse(lo: min(col.v))')
     assert isinstance(result, list)
     assert result[0]["lo"] == 2
 
-def test_agg_max():
-    result = val('[{ v: 5 }, { v: 2 }, { v: 8 }] |> agg(hi: max(it.v))')
+def test_collapse_max():
+    result = val('[{ v: 5 }, { v: 2 }, { v: 8 }] |> collapse(hi: max(col.v))')
     assert isinstance(result, list)
     assert result[0]["hi"] == 8
 
-def test_agg_multi():
-    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> agg(total: sum(it.v), n: count(), avg: mean(it.v))')
+def test_collapse_multi():
+    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> collapse(total: sum(col.v), n: count(), avg: mean(col.v))')
     assert isinstance(result, list)
     row = result[0]
     assert row["total"] == 6
     assert row["n"] == 3
     assert row["avg"] == pytest.approx(2.0)
 
-
-# --- Group + agg ---
-
-def test_group_agg():
+def test_collapse_by():
     result = val("""
-data = [
+[
   { region: "A", income: 10 },
   { region: "A", income: 20 },
   { region: "B", income: 30 }
 ]
-data
-|> group(by: "region") {
-    |> agg(total: sum(it.income), n: count())
-}
+|> collapse(by: "region", total: sum(col.income), n: count())
 """)
     assert isinstance(result, list)
     assert len(result) == 2
@@ -215,13 +209,61 @@ data
     assert by_region["B"]["total"] == 30
     assert by_region["B"]["n"] == 1
 
-def test_group_preserves_key():
-    result = val("""
-data = [{ cat: "x", v: 1 }, { cat: "x", v: 2 }, { cat: "y", v: 3 }]
-data |> group(by: "cat") { |> agg(n: count()) }
-""")
+def test_collapse_by_preserves_key():
+    result = val('[{ cat: "x", v: 1 }, { cat: "x", v: 2 }, { cat: "y", v: 3 }] |> collapse(by: "cat", n: count())')
     assert isinstance(result, list)
     assert all("cat" in r for r in result)
+
+
+# --- col.field and add broadcast ---
+
+def test_col_ref():
+    from peppermint.interpreter import ColRef
+    result = val('col.salary')
+    assert isinstance(result, ColRef)
+    assert result.field == "salary"
+
+def test_add_broadcast_mean():
+    result = val('[{ g: "a", v: 10 }, { g: "a", v: 20 }, { g: "b", v: 30 }] |> add(avg: mean(col.v, by: "g"))')
+    assert isinstance(result, list)
+    by_g = {r["g"]: r["avg"] for r in result}
+    assert by_g["a"] == pytest.approx(15.0)
+    assert by_g["b"] == pytest.approx(30.0)
+
+
+# --- take ---
+
+def test_take():
+    result = val('[1, 2, 3, 4, 5] |> take(3)')
+    assert result == [1, 2, 3]
+
+def test_take_table():
+    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> take(2)')
+    assert len(result) == 2
+
+
+# --- rank ---
+
+def test_rank_asc():
+    result = val('[{ v: 30 }, { v: 10 }, { v: 20 }] |> add(r: rank(col.v))')
+    ranks = {row["v"]: row["r"] for row in result}
+    assert ranks[10] == 1
+    assert ranks[20] == 2
+    assert ranks[30] == 3
+
+def test_rank_desc():
+    result = val('[{ v: 30 }, { v: 10 }, { v: 20 }] |> add(r: rank(col.v, dir: "desc"))')
+    ranks = {row["v"]: row["r"] for row in result}
+    assert ranks[30] == 1
+    assert ranks[10] == 3
+
+def test_rank_by_group():
+    result = val('[{ g: "a", v: 10 }, { g: "a", v: 20 }, { g: "b", v: 5 }, { g: "b", v: 15 }] |> add(r: rank(col.v, by: "g"))')
+    by_gv = {(row["g"], row["v"]): row["r"] for row in result}
+    assert by_gv[("a", 10)] == 1
+    assert by_gv[("a", 20)] == 2
+    assert by_gv[("b", 5)] == 1
+    assert by_gv[("b", 15)] == 2
 
 
 # --- Ok / Err propagation ---
