@@ -19,9 +19,9 @@ classifiers = [
 
 [project.optional-dependencies]
 data = ["pandas"]
-ml = ["pandas", "scikit-learn", "umap-learn"]
+ml = ["pandas", "scikit-learn", "umap-learn", "openai"]
 viz = ["pandas", "matplotlib", "seaborn"]
-all = ["pandas", "scikit-learn", "umap-learn", "matplotlib", "seaborn"]
+all = ["pandas", "scikit-learn", "umap-learn", "openai", "matplotlib", "seaborn"]
 
 [project.urls]
 Repository = "https://github.com/chayapatr/peppermint"

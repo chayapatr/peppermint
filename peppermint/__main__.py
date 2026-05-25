@@ -1,6 +1,18 @@
 import sys
 import argparse
+import os
+from pathlib import Path
+
 sys.setrecursionlimit(50000)
+
+# Load .env from cwd or project root
+for _env_path in [Path.cwd() / ".env", Path(__file__).parent.parent / ".env"]:
+    if _env_path.exists():
+        for _line in _env_path.read_text().splitlines():
+            if _line.strip() and not _line.startswith("#") and "=" in _line:
+                _k, _v = _line.split("=", 1)
+                os.environ.setdefault(_k.strip(), _v.strip())
+        break
 from .parser import parse, ParseError
 from .interpreter import Interpreter, Err, Ok, PepError
 from .stdlib import build_global_env

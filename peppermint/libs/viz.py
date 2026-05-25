@@ -2,7 +2,33 @@
 Peppermint viz stdlib — uses bridge for type conversion.
 """
 from __future__ import annotations
+import os
+import tempfile
+import subprocess
+import platform
 from ..bridge import ok, err, get_rows, to_python
+
+
+_FONT = "Helvetica Neue"
+
+
+def _setup_font():
+    import matplotlib.pyplot as plt
+    plt.rcParams["font.family"] = _FONT
+
+
+def _show(fig):
+    import matplotlib.pyplot as plt
+    path = os.path.join(tempfile.mkdtemp(), "plot.png")
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    system = platform.system()
+    if system == "Darwin":
+        subprocess.run(["open", path])
+    elif system == "Windows":
+        os.startfile(path)
+    else:
+        subprocess.run(["xdg-open", path])
 
 
 def _to_df(data):
@@ -10,30 +36,52 @@ def _to_df(data):
     return pd.DataFrame(get_rows(data))
 
 
-def scatter(data, x=None, y=None, color=None, label=None, _interp=None, _env=None, **_):
+def scatter(data, x=None, y=None, color=None, label=None, title=None, display=None, _interp=None, _env=None, **_):
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
+        _setup_font()
 
         from ..bridge import to_python as _ev
-        x = _ev(x) if not isinstance(x, str) else x
-        y = _ev(y) if not isinstance(y, str) else y
-        color = _ev(color) if color is not None and not isinstance(color, str) else color
+        x       = _ev(x)       if not isinstance(x,     str)  else x
+        y       = _ev(y)       if not isinstance(y,     str)  else y
+        color   = _ev(color)   if color   is not None and not isinstance(color,   str) else color
+        label   = _ev(label)   if label   is not None and not isinstance(label,   str) else label
+        title   = _ev(title)   if title   is not None and not isinstance(title,   str) else title
+        display = _ev(display) if display is not None and not isinstance(display, list) else (display or [])
+        show = set(display)
 
         df = _to_df(data)
         fig, ax = plt.subplots()
+
         if color and color in df.columns:
             for name, group in df.groupby(color):
                 ax.scatter(group[x], group[y], label=str(name), alpha=0.7)
-            ax.legend()
+            if "legend" in show:
+                ax.legend()
         else:
             ax.scatter(df[x], df[y], alpha=0.7)
-        ax.set_xlabel(x)
-        ax.set_ylabel(y)
+
+        if "labels" in show and label and label in df.columns:
+            for _, row in df.iterrows():
+                ax.annotate(str(row[label]), (row[x], row[y]),
+                            textcoords="offset points", xytext=(5, 5), fontsize=8)
+
+        if "axes" in show:
+            ax.set_xlabel(x)
+            ax.set_ylabel(y)
+        else:
+            ax.set_xlabel("")
+            ax.set_ylabel("")
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+        if "title" in show and title:
+            ax.set_title(title)
+
         plt.tight_layout()
-        plt.show()
-        plt.close(fig)
+        _show(fig)
         return ok(data)
     except Exception as e:
         return err(str(e))
@@ -52,8 +100,7 @@ def histogram(data, col=None, **_):
         ax.set_xlabel(col)
         ax.set_ylabel("count")
         plt.tight_layout()
-        plt.show()
-        plt.close(fig)
+        _show(fig)
         return ok(data)
     except Exception as e:
         return err(str(e))
@@ -71,8 +118,7 @@ def heatmap(data, **_):
         fig, ax = plt.subplots(figsize=(10, 8))
         sns.heatmap(num_df.corr(), annot=True, fmt=".2f", ax=ax)
         plt.tight_layout()
-        plt.show()
-        plt.close(fig)
+        _show(fig)
         return ok(data)
     except Exception as e:
         return err(str(e))
@@ -112,8 +158,7 @@ def grid(*datasets, **_):
                 ax.set_xlabel(num_cols[0])
                 ax.set_ylabel(num_cols[1])
         plt.tight_layout()
-        plt.show()
-        plt.close(fig)
+        _show(fig)
         return ok(datasets[0] if datasets else None)
     except Exception as e:
         return err(str(e))

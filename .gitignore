@@ -9,5 +9,6 @@ vscode-peppermint/node_modules/
 
 # Dev scratch
 dump/
+.env
 
 dist/
