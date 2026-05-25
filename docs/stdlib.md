@@ -107,3 +107,61 @@
 | `str.length(s)` | String length |
 | `str.match(s, pattern)` | True if regex matches |
 | `str.slice(s, start, end?)` | Substring by index |
+
+---
+
+## Writing Python libs
+
+Plain Python files work out of the box — just import them and Peppermint wraps the public functions automatically. For more control, use the `peppermint.bridge` decorators.
+
+### Simple case — no decorators needed
+
+```python
+# mylib.py
+def normalize(rows):
+    total = sum(r["value"] for r in rows)
+    return [{**r, "pct": r["value"] / total} for r in rows]
+```
+
+```
+use "./mylib.py" as mylib
+load("data.csv") |> mylib.normalize() |> print()
+```
+
+Functions receive plain Python values (`list[dict]`, `str`, `int`, etc.) and return plain Python. Exceptions become `Err` automatically.
+
+### Using decorators
+
+Decorators give you hover tooltips in the LSP and handle lazy kwargs (expressions that haven't been evaluated yet when the function is called, like ranges or `env.get(...)`).
+
+```python
+from peppermint.bridge import pep_fn
+from peppermint.stdlib.core import pep_signature
+
+@pep_fn
+@pep_signature("mylib.top(data, n: Int) -> List<Row>")
+def top(data, n=10):
+    """Return the top n rows by the first numeric column."""
+    return sorted(data, key=lambda r: list(r.values())[0], reverse=True)[:n]
+
+def build_mylib_env():
+    return {"top": top}
+```
+
+`build_mylib_env()` is optional but required if you want Peppermint to discover the lib via `use mylib` (without a path). For path-based imports (`use "./mylib.py"`), it's not needed.
+
+### How `@pep_fn` works
+
+When a Peppermint expression like `mylib.top(data, n: 2..8)` is called, the `n` argument may arrive as an unevaluated AST node — the interpreter hasn't resolved the range yet. `@pep_fn` checks each kwarg: if it's a plain value (`str`, `int`, `bool`, `list`), it passes through unchanged; if it looks like an AST node, it calls `_interp.eval()` to resolve it first. Your function body always receives plain Python.
+
+Without `@pep_fn`, plain imports still work — but any unevaluated expression passed as a kwarg would arrive as an internal AST object rather than its resolved value.
+
+### Decorators
+
+| Decorator | Behavior |
+|---|---|
+| `@pep_fn` | **Default.** Auto-evaluates unevaluated kwargs before calling the function. Exceptions become `Err`. |
+| `@pep_fn_lazy` | Alias for `@pep_fn`. Use to signal explicitly that kwargs may be expressions. |
+| `@pep_fn_static` | No evaluation step — args pass straight through. Use when all args are guaranteed plain literals. |
+
+`@pep_signature("lib.fn(args) -> ReturnType")` attaches the signature string shown in LSP hover tooltips.

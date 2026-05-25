@@ -3,7 +3,7 @@ Peppermint ml stdlib — uses bridge for type conversion.
 Python functions receive plain list[dict], return plain list[dict].
 """
 from __future__ import annotations
-from ..bridge import ok, err, get_rows, pep_fn
+from ..bridge import ok, err, get_rows, pep_fn_lazy
 from ..stdlib.core import pep_signature
 
 
@@ -21,7 +21,7 @@ def _numeric_cols(df):
     return df.select_dtypes(include=[np.number]).columns.tolist()
 
 
-@pep_fn
+@pep_fn_lazy
 @pep_signature("ml.kmeans(k: Int | Range, on: str, out: str) -> List<Row>")
 def kmeans(data, k=None, on=None, out=None):
     """K-means clustering. `k` accepts a range for auto-selection by silhouette score."""
@@ -67,7 +67,7 @@ def kmeans(data, k=None, on=None, out=None):
     return ok(_from_df(df))
 
 
-@pep_fn
+@pep_fn_lazy
 @pep_signature("ml.ols(on: str, out: str) -> List<Row>")
 def ols(data, on=None, out=None):
     """OLS regression. Adds predicted and residual columns. Prints R² to stderr."""
@@ -98,7 +98,7 @@ def ols(data, on=None, out=None):
     return ok(_from_df(df))
 
 
-@pep_fn
+@pep_fn_lazy
 @pep_signature("ml.umap(dims: Int, on: str, out: str | List<str>) -> List<Row>")
 def umap(data, dims=2, on=None, out=None):
     """Dimensionality reduction. `out: \"umap\"` adds `umap_1`, `umap_2`, ... columns. `out: [\"x\", \"y\"]` uses explicit names (length must match `dims`)."""
@@ -139,7 +139,7 @@ def umap(data, dims=2, on=None, out=None):
     return ok(_from_df(df))
 
 
-@pep_fn
+@pep_fn_lazy
 @pep_signature("ml.embed(text: str, source: str, model: str, apikey: str) -> List<Num>")
 def embed(text, source=None, model=None, apikey=None):
     """Embed a single text string. Use inside `add`: `add(embedding: ml.embed(it.name, ...))`."""
@@ -162,7 +162,7 @@ def embed(text, source=None, model=None, apikey=None):
         return err(f"embed: unknown source '{source}' (use 'deepinfra' or 'local')")
 
 
-@pep_fn
+@pep_fn_lazy
 @pep_signature("ml.silhouette(on: str) -> List<Row>")
 def silhouette(data, on=None):
     """Score current clustering. Prints silhouette score to stderr."""

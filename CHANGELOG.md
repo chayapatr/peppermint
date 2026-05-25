@@ -14,8 +14,11 @@
 
 ### Bridge
 
-- `@pep_fn` decorator for lib functions: auto-evaluates all named args, catches exceptions as `Err` — eliminates `_eval_arg` boilerplate when writing libs
-- `ml` and `viz` refactored to use `@pep_fn`
+- `@pep_fn` — default decorator for lib functions; auto-evaluates unevaluated kwargs, catches exceptions as `Err`
+- `@pep_fn_lazy` — alias for `@pep_fn`, signals intent that kwargs may be expressions
+- `@pep_fn_static` — no evaluation step, for functions whose args are always plain literals
+- All stdlib libs (`ml`, `viz`, `math`, `str`) migrated from `wrap_lib` to `@pep_fn`
+- `wrap_lib` still available for plain Python file imports
 
 ### ml (breaking)
 

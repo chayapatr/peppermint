@@ -161,25 +161,22 @@ def wrap_lib(fns: dict) -> dict:
 
 
 def pep_fn(fn: Callable) -> Callable:
-    """Decorator for lib functions: auto-evaluates all named args before the function body runs.
+    """Decorator for lib functions. The default choice for most lib functions.
 
-    The decorated function receives plain Python values — no _interp/_env/_eval_arg boilerplate.
-    Exceptions are caught and returned as Err. The first positional arg (data/text) is passed as-is.
+    Automatically evaluates any unevaluated AST node kwargs via _interp before
+    the function body runs. Plain values (str, int, float, bool, list) pass through
+    unchanged. Exceptions are caught and returned as Err.
+
+    Use @pep_fn_static if you know all args will always be plain Python values
+    and want to skip the evaluation step.
 
     Usage::
 
         @pep_fn
-        @pep_signature("ml.embed(text: str, ...) -> List<Num>")
-        def embed(text, source=None, model=None, apikey=None):
+        @pep_signature("ml.kmeans(k: Int | Range, on: str, out: str) -> List<Row>")
+        def kmeans(data, k=None, on=None, out=None):
             ...
     """
-    import inspect
-    sig = inspect.signature(fn)
-    param_names = [
-        p for p in sig.parameters
-        if not p.startswith("_") and p not in ("data",)
-    ]
-
     @functools.wraps(fn)
     def wrapper(*args, _interp=None, _env=None, **kwargs):
         def _ev(val):
@@ -202,8 +199,39 @@ def pep_fn(fn: Callable) -> Callable:
         try:
             return fn(*args, **evaluated_kwargs)
         except Exception as e:
-            Ok, Err = _interp_types()
+            _, Err = _interp_types()
             return Err(str(e))
 
     wrapper._pep_fn = True
+    return wrapper
+
+
+pep_fn_lazy = pep_fn  # alias — same behavior, explicit about intent
+
+
+def pep_fn_static(fn: Callable) -> Callable:
+    """Decorator for lib functions whose args are guaranteed plain Python values.
+
+    No evaluation step — args are passed directly to the function body.
+    Use when every argument is a literal that the interpreter has already resolved.
+    Exceptions are caught and returned as Err.
+
+    Usage::
+
+        @pep_fn_static
+        @pep_signature("math.clamp(x: Num, lo: Num, hi: Num) -> Num")
+        def clamp(x, lo, hi):
+            ...
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        kwargs.pop("_interp", None)
+        kwargs.pop("_env", None)
+        kwargs.pop("_block", None)
+        try:
+            return fn(*args, **kwargs)
+        except Exception as e:
+            _, Err = _interp_types()
+            return Err(str(e))
+    wrapper._pep_fn_static = True
     return wrapper

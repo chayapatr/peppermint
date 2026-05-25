@@ -214,7 +214,24 @@ use "./transforms.pep" as t
 use "./my_utils.py" as u     # plain Python file
 ```
 
-Python files are loaded via the bridge — functions receive and return plain Python types, conversion is automatic.
+Python files are loaded via the bridge. When a `.py` file is imported with a path (`use "./file.py"`), Peppermint wraps every public function automatically — no decorators needed. Functions receive plain Python values, return values are converted back, and exceptions become `Err`.
+
+```python
+# transforms.py — no imports needed
+def normalize(rows):
+    total = sum(r["value"] for r in rows)
+    return [{**r, "pct": r["value"] / total} for r in rows]
+```
+
+```
+use "./transforms.py" as t
+
+load("data.csv")
+  |> t.normalize()
+  |> print()
+```
+
+The automatic wrapping handles type conversion but not lazy kwargs — if a function accepts expressions like ranges (`2..8`) or `env.get(...)` as named arguments, those may arrive unevaluated. For that case, use `@pep_fn` from `peppermint.bridge`. See [stdlib.md](stdlib.md#writing-python-libs) for the full decorator reference.
 
 ---
 
