@@ -406,11 +406,11 @@ class Parser:
             elif self._at("LPAREN"):
                 lparen = self._eat("LPAREN")
                 self._skip_nl()
-                args, kwargs = [], {}
+                args, kwargs, inline_block = [], {}, None
                 if not self._at("RPAREN"):
-                    args, kwargs = self._parse_arglist()
+                    args, kwargs, inline_block = self._parse_arglist()
                 self._eat("RPAREN")
-                block = None
+                block = inline_block
                 if self._at("LBRACE"):
                     block = self._parse_block()
                 node = Call(func=node, args=args, kwargs=kwargs, block=block, loc=self._loc(lparen))
@@ -428,10 +428,20 @@ class Parser:
 
     def _parse_arglist(self):
         args, kwargs = [], {}
+        inline_block = None
         self._skip_nl()
         while not self._at("RPAREN", "EOF"):
+            # inline block: |> step |> step ... inside call args
+            if self._at("PIPE"):
+                steps = []
+                while self._at("PIPE"):
+                    self._eat("PIPE")
+                    steps.append(self._parse_pipe_step())
+                    self._skip_nl()
+                inline_block = steps
+                break
             # kwarg: NAME COLON expr
-            if self._at("NAME") and self._peek2().type == "COLON":
+            elif self._at("NAME") and self._peek2().type == "COLON":
                 key_tok = self._eat("NAME")
                 self._eat("COLON")
                 self._skip_nl()
@@ -445,7 +455,7 @@ class Parser:
                 self._skip_nl()
             else:
                 break
-        return args, kwargs
+        return args, kwargs, inline_block
 
     def _parse_block(self) -> list:
         """{ |> step ... } sub-pipe block for group."""

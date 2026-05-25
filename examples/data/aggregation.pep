@@ -1,35 +1,34 @@
-# 07_aggregation.pep — agg, group, and aggregation functions
+# aggregation.pep — collapse, each, and column functions
 
-# Basic aggregation — collapse a list into a single summary row
+# Basic aggregation — collapse all rows into a single summary
 load("examples/people.csv")
-  |> agg(
-      total_income: sum(it.income),
-      avg_income:   mean(it.income),
-      min_age:      min(it.age),
-      max_age:      max(it.age),
-      n:            count()
+  |> collapse(
+      avg_income: mean(col.income),
+      min_age:    min(col.age),
+      max_age:    max(col.age),
+      n:          count()
   )
   |> print()
 
-# Group by region, summarize each group
+# Group by region using collapse
 load("examples/people.csv")
-  |> group(by: "region") {
-      |> agg(
-          avg_income: mean(it.income),
-          n:          count()
-      )
-  }
+  |> collapse(by: "region",
+      avg_income: mean(col.income),
+      n:          count()
+  )
   |> sort(by: "avg_income", dir: "desc")
   |> print()
 
-# Inline list — no file needed
-[
-  { category: "A", value: 10 },
-  { category: "A", value: 20 },
-  { category: "B", value: 5  },
-  { category: "B", value: 15 }
-]
-  |> group(by: "category") {
-      |> agg(total: sum(it.value), n: count())
-  }
+# Annotate each row with its group average (broadcast)
+load("examples/people.csv")
+  |> add(region_avg: mean(col.income, by: "region"))
+  |> print()
+
+# Top 1 per region using each
+load("examples/people.csv")
+  |> each(by: "region",
+      |> add(rank: rank(col.income, dir: "desc"))
+      |> filter(it.rank == 1)
+      |> drop("rank")
+  )
   |> print()

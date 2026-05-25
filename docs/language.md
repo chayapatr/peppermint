@@ -294,6 +294,7 @@ lst[a..b]            # slice (inclusive)
 | `sort(by, dir)` | Sort rows |
 | `take(n)` | Keep first n rows |
 | `join(other, on)` | Inner join on a shared key field |
+| `each(by:, \|> ...)` | Run a sub-pipe per group, concatenate results |
 | `collapse(by:, ...)` | Aggregate rows, optionally grouped |
 | `sum(col.field)` | Sum of a column — use in `collapse` or `add` |
 | `mean(col.field)` | Mean of a column — use in `collapse` or `add` |
@@ -399,8 +400,30 @@ load("employees.csv")
 load("employees.csv")
   |> add(rank: rank(col.salary, by: "dept", dir: "desc"))
   |> filter(it.rank <= 2)
-  |> drop(rank)
+  |> drop("rank")
 ```
+
+### `each` — arbitrary pipe per group
+
+For cases where `by:` on a column function isn't enough — side effects per group, or complex multi-step transforms per partition:
+
+```
+load("sales.csv")
+  |> each(by: "region", |> viz.scatter(x: "date", y: "amount"))
+```
+
+Multi-step sub-pipe:
+
+```
+load("data.csv")
+  |> each(by: "cohort",
+      |> filter(it.score > 0)
+      |> add(rank: rank(col.score))
+      |> take(10)
+  )
+```
+
+If the sub-pipe produces a table, `each` concatenates results across groups and the pipe continues. If it's a pure side effect (`save`, `viz`, `print`), `each` returns the original table unchanged. The group key is always present in the result.
 
 ### Rolling window
 

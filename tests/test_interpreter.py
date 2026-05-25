@@ -371,3 +371,50 @@ index_in = lst -> val -> reduce(
 index_in(["x", "y", "z"])("x")
 """)
     assert result == 0
+
+
+# --- each ---
+
+def test_each_collapse():
+    result = val("""
+[
+  { region: "A", v: 10 },
+  { region: "A", v: 20 },
+  { region: "B", v: 30 }
+]
+|> each(by: "region", |> collapse(total: sum(col.v), n: count()))
+""")
+    assert isinstance(result, list)
+    assert len(result) == 2
+    by_region = {r["region"]: r for r in result}
+    assert by_region["A"]["total"] == 30
+    assert by_region["A"]["n"] == 2
+    assert by_region["B"]["total"] == 30
+    assert by_region["B"]["n"] == 1
+
+def test_each_multi_step():
+    result = val("""
+[
+  { g: "x", v: 3 },
+  { g: "x", v: 1 },
+  { g: "x", v: 2 },
+  { g: "y", v: 5 },
+  { g: "y", v: 4 }
+]
+|> each(by: "g",
+    |> add(rank: rank(col.v, dir: "desc"))
+    |> filter(it.rank <= 2)
+)
+""")
+    assert isinstance(result, list)
+    assert len(result) == 4
+    x_rows = sorted([r for r in result if r["g"] == "x"], key=lambda r: r["rank"])
+    assert x_rows[0]["v"] == 3
+    assert x_rows[1]["v"] == 2
+
+def test_each_preserves_group_key():
+    result = val("""
+[{ cat: "a", v: 1 }, { cat: "b", v: 2 }]
+|> each(by: "cat", |> collapse(n: count()))
+""")
+    assert all("cat" in r for r in result)

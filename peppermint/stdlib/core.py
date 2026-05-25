@@ -143,6 +143,47 @@ def reduce(data, init, fn, _interp=None, _env=None, **_) -> Any:
 
 
 
+def each(data, by=None, _block=None, _interp=None, _env=None, **_):
+    """Apply a sub-pipe to each group independently.
+
+    If the sub-pipe produces a table, results are concatenated and returned.
+    If the sub-pipe is a pure side effect (viz, save, print), the original table is returned.
+    """
+    from ..ast_nodes import Pipe, Literal
+
+    by = _eval_arg(by, _interp, _env)
+    if by is None:
+        raise ValueError("each() requires 'by' argument")
+    if _block is None:
+        raise ValueError("each() requires a sub-pipe: |> step or { |> step }")
+
+    rows = _to_list(data)
+    groups: dict = {}
+    for row in rows:
+        key = row.get(by)
+        groups.setdefault(key, []).append(row)
+
+    all_results = []
+    is_side_effect = None
+
+    for key, group_rows in groups.items():
+        pipe = Pipe(steps=[Literal(group_rows)] + list(_block))
+        result = _interp.eval_pipe(pipe, _env)
+        if isinstance(result, Err):
+            return result
+        value = result.value if isinstance(result, Ok) else result
+        if isinstance(value, list):
+            if is_side_effect is None:
+                is_side_effect = False
+            all_results.extend([{by: key, **row} for row in value])
+        else:
+            is_side_effect = True
+
+    if is_side_effect:
+        return rows
+    return all_results
+
+
 def join(data, other, on=None, _interp=None, _env=None, **_) -> list:
     on = _eval_arg(on, _interp, _env)
     other_rows = _to_list(other)
@@ -317,7 +358,7 @@ def concat(*args, _interp=None, _env=None, **_):
     return result
 
 
-for _fn in (filter_, map_, mapi, add, sort, reduce, collapse, sum_, mean_, count_, min_, max_):
+for _fn in (filter_, map_, mapi, add, sort, reduce, each, collapse, sum_, mean_, count_, min_, max_):
     _fn._accepts_deferred = True
 
 
@@ -334,6 +375,7 @@ def build_core_env() -> dict:
         "rename": rename,
         "sort":   sort,
         "reduce": reduce,
+        "each":     each,
         "join":     join,
         "collapse": collapse,
         "sum":      sum_,

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "peppermint-lang"
-version = "0.2.2"
+version = "0.3.0"
 description = "A pipe-first DSL for data and ML work"
 readme = "README.md"
 license = "MIT"
@@ -21,7 +21,14 @@ classifiers = [
 data = ["pandas"]
 ml = ["pandas", "scikit-learn", "umap-learn", "openai"]
 viz = ["pandas", "matplotlib", "seaborn"]
-all = ["pandas", "scikit-learn", "umap-learn", "openai", "matplotlib", "seaborn"]
+all = [
+    "pandas",
+    "scikit-learn",
+    "umap-learn",
+    "openai",
+    "matplotlib",
+    "seaborn",
+]
 
 [project.urls]
 Repository = "https://github.com/chayapatr/peppermint"
