@@ -342,6 +342,12 @@ class Interpreter:
                 line += f"  \033[31m({dropped} dropped)\033[0m"
             if added_cols:
                 line += f"  \033[32m(+{', '.join(added_cols)})\033[0m"
+        if isinstance(call_node, Call) and "concurrent" in call_node.kwargs:
+            try:
+                n = self.eval(call_node.kwargs["concurrent"], {})
+                line += f"  \033[2m[{n} concurrent]\033[0m"
+            except Exception:
+                pass
         print(line, file=sys.stderr)
 
     def _call_name(self, node) -> str:

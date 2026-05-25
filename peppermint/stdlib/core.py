@@ -79,11 +79,16 @@ def filter_(data, pred, _interp=None, _env=None, **_) -> list:
     return [item for item in items if _unwrap(fn(item))]
 
 
-@pep_signature("map(expr: Expr) -> List<Any>")
-def map_(data, transform, _interp=None, _env=None, **_) -> list:
-    """Transform every element. `it` refers to the current element."""
+@pep_signature("map(expr: Expr, concurrent: Int?) -> List<Any>")
+def map_(data, transform, concurrent=None, _interp=None, _env=None, **_) -> list:
+    """Transform every element. `it` refers to the current element. `concurrent: N` runs in a thread pool with N workers."""
+    concurrent = int(_eval_arg(concurrent, _interp, _env)) if concurrent is not None else None
     items = _to_list(data)
     fn = _interp.make_row_fn(transform, _env)
+    if concurrent:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=concurrent) as pool:
+            return list(pool.map(lambda item: _unwrap(fn(item)), items))
     return [_unwrap(fn(item)) for item in items]
 
 
@@ -123,7 +128,7 @@ def add(data, _interp=None, _env=None, **kwargs) -> list:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=concurrent) as pool:
             values = list(pool.map(lambda row: _unwrap(fn(row)), rows))
-        return [{**row, field: val} for row, val in zip(rows, values)]
+        return [{**row, field: v} for row, v in zip(rows, values)]
 
     return [{**row, field: _unwrap(fn(row))} for row in rows]
 
