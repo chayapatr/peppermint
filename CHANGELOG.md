@@ -1,5 +1,9 @@
 # Changelog
 
+# 0.3.1 — 2026-05-25
+
+- fix README.md for PyPI
+
 ## 0.3.0 — 2026-05-25
 
 ### Language
