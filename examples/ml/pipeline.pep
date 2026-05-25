@@ -11,6 +11,6 @@ load("examples/data.csv")
   |> ml.kmeans(k: 2, on: "embedding", out: "cluster")
   |> ml.umap(dims: 2, on: "embedding", out: "umap")
   |> viz.scatter(
-    x: "umap1", y: "umap2", color: "cluster",
+    x: "umap_1", y: "umap_2", color: "cluster",
     label: "name", display: ["labels"]
 )

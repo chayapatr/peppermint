@@ -4,11 +4,12 @@ use ml
 
 result = load("examples/data.csv")
   # run text embedding
-  |> add(embedding: ml.embed(
-        it.name,
-        source: "deepinfra",
-        model: "Qwen/Qwen3-Embedding-4B",
-        apikey: env.get("DEEPINFRA_TOKEN")),
+  |> add(embedding:
+        ml.embed(
+          it.name,
+          source: "deepinfra",
+          model: "Qwen/Qwen3-Embedding-4B",
+          apikey: env.get("DEEPINFRA_TOKEN")),
         concurrent: 10
     )
 
@@ -21,10 +22,10 @@ result = load("examples/data.csv")
         on: "embedding",
         out: "umap")
   |> viz.scatter(
-      x: "umap1", y: "umap2", color: "cluster",
+      x: "umap_1", y: "umap_2", color: "cluster",
       label: "name", display: ["labels"])
 
-  # run nested kmeans
+  # run nested kmeans + viz
   |> each(by: "cluster",
     |> ml.kmeans(
         k: 2..6,
@@ -35,7 +36,7 @@ result = load("examples/data.csv")
         on: "embedding",
         out: "innerumap")
     |> viz.scatter(
-      x: "innerumap1", y: "innerumap2", color: "innercluster",
+      x: "innerumap_1", y: "innerumap_2", color: "innercluster",
       label: "name", display: ["labels"])
     )
 

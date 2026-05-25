@@ -73,7 +73,7 @@ load("data.csv")
     concurrent: 10)
   |> ml.kmeans(k: 2..8, on: "embedding", out: "cluster")
   |> ml.umap(dims: 2, on: "embedding", out: "umap")
-  |> viz.scatter(x: "umap1", y: "umap2", color: "cluster", label: "text", display: ["labels", "legend"])
+  |> viz.scatter(x: "umap_1", y: "umap_2", color: "cluster", label: "text", display: ["labels", "legend"])
 ```
 
 ### Error handling

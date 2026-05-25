@@ -319,8 +319,8 @@ result = load("customers.csv")
   |> ml.kmeans(k: 2..8, score: silhouette)
   |> ml.umap(dims: 2)
 
-result |> viz.scatter(x: "umap1", y: "umap2", color: "cluster")
-result |> viz.scatter(x: "umap1", y: "umap2", color: "segment")
+result |> viz.scatter(x: "umap_1", y: "umap_2", color: "cluster")
+result |> viz.scatter(x: "umap_1", y: "umap_2", color: "segment")
 
 load("customers.csv")
   |> clean()
@@ -328,5 +328,5 @@ load("customers.csv")
   |> group(by: "region") {
       |> ml.kmeans(k: 3)
   }
-  |> viz.scatter(x: "umap1", y: "umap2", color: "cluster")
+  |> viz.scatter(x: "umap_1", y: "umap_2", color: "cluster")
 """)

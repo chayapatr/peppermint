@@ -436,13 +436,13 @@ result = load("customers.csv")
   |> ml.kmeans(k: 2..8)
   |> ml.umap(dims: 2)
 
-result |> viz.scatter(x: "umap1", y: "umap2", color: "cluster")
+result |> viz.scatter(x: "umap_1", y: "umap_2", color: "cluster")
 
 load("customers.csv")
   |> group(by: "region") {
       |> ml.kmeans(k: 3)
   }
-  |> viz.scatter(x: "umap1", y: "umap2", color: "cluster")
+  |> viz.scatter(x: "umap_1", y: "umap_2", color: "cluster")
 """)
     assert len(prog.body) == 6
     assert isinstance(prog.body[0], UseDecl)              # use ml

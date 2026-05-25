@@ -332,7 +332,7 @@ All ml functions require `on:` (input column) and `out:` (output column) to be e
 |---|---|
 | `ml.embed(on:, out:, source:, model:, apikey:)` | Text embedding — adds embedding column |
 | `ml.kmeans(k:, on:, out:)` | K-means clustering — adds cluster column; `k:` accepts a range for auto-select |
-| `ml.umap(dims:, on:, out:)` | Dimensionality reduction — `out: "umap"` adds `umap1`, `umap2`; `out: ["x","y"]` names explicitly |
+| `ml.umap(dims:, on:, out:)` | Dimensionality reduction — `out: "umap"` adds `umap_1`, `umap_2`; `out: ["x","y"]` names explicitly |
 | `ml.ols(on:, out:)` | OLS regression — adds predicted and residual columns; prints R² to stderr |
 | `ml.silhouette(on:)` | Score current clustering — prints score to stderr |
 

@@ -9,7 +9,7 @@ load("examples/data.csv")
       model: "all-MiniLM-L6-v2")
   |> ml.umap(dims: 2, on: "embedding", out: "umap")
   |> viz.scatter(
-    x: "umap1", y: "umap2",
+    x: "umap_1", y: "umap_2",
     color: "category", label: "name",
     display: ["labels", "legend"]
 )
