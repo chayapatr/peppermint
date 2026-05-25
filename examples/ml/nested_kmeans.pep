@@ -2,7 +2,7 @@ use viz
 use env
 use ml
 
-load("examples/data.csv")
+result = load("examples/data.csv")
   # run text embedding
   |> add(embedding: ml.embed(
         it.name,
@@ -11,10 +11,10 @@ load("examples/data.csv")
         apikey: env.get("DEEPINFRA_TOKEN")),
         concurrent: 10
     )
-  
+
   # run top-level k-means
   |> ml.kmeans(k: 2..6, on: "embedding", out: "cluster")
-  
+
   # run top level scatter plot
   |> ml.umap(
         dims: 2,
@@ -38,3 +38,8 @@ load("examples/data.csv")
       x: "innerumap1", y: "innerumap2", color: "innercluster",
       label: "name", display: ["labels"])
     )
+
+match(result,
+  Ok(data): print(data),
+  Err(msg): print(str.join(["error: ", msg]))
+)

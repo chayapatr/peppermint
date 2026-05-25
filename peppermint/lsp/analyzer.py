@@ -7,7 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from peppermint.ast_nodes import (
     Program, Assign, UseDecl, NsDecl, Ident, FieldAccess,
-    Call, Pipe, PipeStep, Lambda, Match, Block, Loc
+    Call, Pipe, PipeStep, Lambda, Match, Block, Loc,
+    PatOk, PatErr,
 )
 
 
@@ -142,7 +143,10 @@ def _walk_refs(node, known: set, undefined: list):
     elif isinstance(node, Match):
         _walk_refs(node.subject, known, undefined)
         for arm in node.arms:
-            _walk_refs(arm.body, known, undefined)
+            arm_known = known
+            if isinstance(arm.pattern, (PatOk, PatErr)) and arm.pattern.name:
+                arm_known = known | {arm.pattern.name}
+            _walk_refs(arm.body, arm_known, undefined)
     elif isinstance(node, Block):
         block_known = set(known)
         for s in node.stmts:
