@@ -2,6 +2,9 @@ use ml
 use viz
 use env
 
+
+
+
 load("examples/data.csv")
   |> ml.embed(
       on: "name", out: "embedding",

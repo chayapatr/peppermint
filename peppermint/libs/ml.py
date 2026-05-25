@@ -120,9 +120,9 @@ def ols(data, on=None, out=None, _interp=None, _env=None, **_):
         return err(str(e))
 
 
-@pep_signature("ml.umap(dims: Int, on: str, out: str) -> List<Row>")
+@pep_signature("ml.umap(dims: Int, on: str, out: str | List<str>) -> List<Row>")
 def umap(data, dims=2, on=None, out=None, _interp=None, _env=None, **_):
-    """Dimensionality reduction. Adds `out1`, `out2` columns (or explicit names if `out` is a list)."""
+    """Dimensionality reduction. `out: \"umap\"` adds `umap1`, `umap2`, ... columns. `out: [\"x\", \"y\"]` uses explicit names (length must match `dims`)."""
     try:
         import numpy as np
         import umap as umap_lib
@@ -153,6 +153,8 @@ def umap(data, dims=2, on=None, out=None, _interp=None, _env=None, **_):
 
         df = df.copy()
         if isinstance(out, list):
+            if len(out) != dims:
+                return err(f"umap: out has {len(out)} names but dims={dims}")
             for i, col in enumerate(out):
                 df.loc[idx, col] = embedding[:, i]
         else:

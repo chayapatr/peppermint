@@ -12,12 +12,16 @@ from lsprotocol.types import (
     CompletionList, CompletionItem, CompletionItemKind,
     Diagnostic, DiagnosticSeverity, Position, Range, Location,
     PublishDiagnosticsParams,
+    TextDocumentSyncKind,
 )
 from peppermint.parser import parse, ParseError
 from .analyzer import analyze, AnalysisResult
 from .catalog import init as init_catalog, CATALOG
 
-server = LanguageServer("peppermint-lsp", "v0.1")
+server = LanguageServer(
+    "peppermint-lsp", "v0.1",
+    text_document_sync_kind=TextDocumentSyncKind.Full,
+)
 
 # Per-document state: uri -> AnalysisResult
 _docs: dict[str, AnalysisResult] = {}

@@ -1,0 +1,38 @@
+use viz
+use env
+use ml
+
+load("examples/data.csv")
+  # run text embeddidng
+  |> ml.embed(
+      on: "name", out: "embedding",
+      source: "deepinfra",
+      model: "Qwen/Qwen3-Embedding-4B",
+      apikey: env.get("DEEPINFRA_TOKEN"))
+  
+  # run top-level k-means
+  |> ml.kmeans(k: 2..6, on: "embedding", out: "cluster")
+  
+  # run top level scatter plot
+  |> ml.umap(
+        dims: 2,
+        on: "embedding",
+        out: "umap")
+  |> viz.scatter(
+      x: "umap1", y: "umap2", color: "cluster",
+      label: "name", display: ["labels"])
+
+  # run nested kmeans
+  |> each(by: "cluster",
+    |> ml.kmeans(
+        k: 2..6,
+        on: "embedding",
+        out: "innercluster")
+    |> ml.umap(
+        dims: 2,
+        on: "embedding",
+        out: "innerumap")
+    |> viz.scatter(
+      x: "innerumap1", y: "innerumap2", color: "innercluster",
+      label: "name", display: ["labels"])
+    )
