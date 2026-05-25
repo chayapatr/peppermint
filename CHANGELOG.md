@@ -16,6 +16,11 @@
 - Upgraded from syntax-only to full LSP client
 - Launches `pep lsp` automatically on `.pep` file open
 
+### ml (breaking)
+
+- `ml.embed` is now a single-row column expression instead of a pipe step: `add(embedding: ml.embed(it.text, source: ..., model: ..., apikey: ...))` — `on:` and `out:` params removed
+- `ml.umap` `out:` now accepts a list of explicit column names; length must match `dims`
+
 ## 0.3.1 — 2026-05-25
 
 - fix README.md for PyPI

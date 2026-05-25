@@ -95,9 +95,13 @@ def mapi(data, transform, _interp=None, _env=None, **_) -> list:
     return [_unwrap(fn({"idx": i, "value": x})) for i, x in enumerate(items)]
 
 
-@pep_signature("add(field: Expr) -> List<Row>")
+@pep_signature("add(field: Expr, concurrent: Int?) -> List<Row>")
 def add(data, _interp=None, _env=None, **kwargs) -> list:
-    """Add a new field to every row. Use `it.field` or `col.field` expressions."""
+    """Add a new field to every row. Use `it.field` or `col.field` expressions. `concurrent: N` runs the expression in a thread pool with N workers."""
+    concurrent = kwargs.pop("concurrent", None)
+    if concurrent is not None:
+        concurrent = int(_eval_arg(concurrent, _interp, _env))
+
     non_meta = {k: v for k, v in kwargs.items() if not k.startswith("_")}
     if len(non_meta) != 1:
         raise ValueError("add() requires exactly one keyword argument: the new field name")
@@ -113,7 +117,15 @@ def add(data, _interp=None, _env=None, **kwargs) -> list:
         return rows.to_dict(orient="records")
 
     fn = _interp.make_row_fn(expr, _env)
-    return [{**row, field: _unwrap(fn(row))} for row in _to_list(data)]
+    rows = _to_list(data)
+
+    if concurrent:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=concurrent) as pool:
+            values = list(pool.map(lambda row: _unwrap(fn(row)), rows))
+        return [{**row, field: val} for row, val in zip(rows, values)]
+
+    return [{**row, field: _unwrap(fn(row))} for row in rows]
 
 
 @pep_signature("take(n: Int) -> List<Row>")

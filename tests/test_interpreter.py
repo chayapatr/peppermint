@@ -266,6 +266,20 @@ def test_rank_by_group():
     assert by_gv[("b", 15)] == 2
 
 
+# --- add concurrent ---
+
+def test_add_concurrent_produces_correct_values():
+    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> add(doubled: it.v * 2, concurrent: 4)')
+    assert isinstance(result, list)
+    assert [r["doubled"] for r in result] == [2, 4, 6]
+
+def test_add_concurrent_preserves_order():
+    import time
+    # Each row sleeps proportional to its index in reverse — if order isn't preserved,
+    # results would come back sorted by completion time
+    result = val('[{ i: 3 }, { i: 2 }, { i: 1 }] |> add(v: it.i, concurrent: 3)')
+    assert [r["i"] for r in result] == [3, 2, 1]
+
 # --- Ok / Err propagation ---
 
 def test_pipe_short_circuits_on_err():
