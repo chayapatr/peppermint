@@ -1,11 +1,11 @@
 # Peppermint
 
-A pipe-first DSL for data and ML work. Designed to be lightweight and readable, where every operation is a pipeline step, errors propagate automatically, and the heavy lifting happens internally so you don't have to worry about it.
+A pipe-first language for data and ML work. Every operation is a pipeline step. Errors propagate automatically. The transform is the notation.
 
 ## Install
 
 ```sh
-pip install -e .
+pip install peppermint-lang
 ```
 
 ## Run
@@ -15,31 +15,79 @@ pep file.pep  # run a file
 pep           # interactive REPL
 ```
 
-## Example
+## Examples
+
+### Transform
 
 ```
-load("survey.csv")
+load("employees.csv")
   |> filter(it.age > 18)
-  |> add(score: it.income / it.age)
-  |> sort(by: "score", dir: "desc")
+  |> add(tax: it.salary * 0.2)
+  |> sort(by: "salary", dir: "desc")
   |> print()
 ```
 
-```
-load("survey.csv")
-  |> group(by: "region") {
-      |> agg(avg_score: mean(it.score), n: count())
-  }
-  |> sort(by: "avg_score", dir: "desc")
-  |> print()
-```
-
-Each step prints a summary as it runs:
+Each step prints a live summary:
 
 ```
 |> filter    → List  843 rows × 5 cols  (157 dropped)
-|> add       → List  843 rows × 6 cols  (+score)
+|> add       → List  843 rows × 6 cols  (+tax)
 |> sort      → List  843 rows × 6 cols
 ```
 
-See [docs/language.md](docs/language.md) for the full language reference and [examples/](examples/) for more.
+### Aggregate
+
+```
+load("sales.csv")
+  |> collapse(by: "region",
+      avg: mean(col.revenue),
+      n:   count()
+  )
+  |> sort(by: "avg", dir: "desc")
+  |> print()
+```
+
+### Top N per group
+
+```
+load("sales.csv")
+  |> each(by: "region",
+      |> add(rank: rank(col.revenue, dir: "desc"))
+      |> filter(it.rank <= 3)
+      |> drop("rank")
+  )
+  |> print()
+```
+
+### ML pipeline
+
+```
+use ml
+use viz
+use env
+
+load("data.csv")
+  |> ml.embed(
+      on: "text", out: "embedding",
+      source: "deepinfra", model: "Qwen/Qwen3-Embedding-4B",
+      apikey: env.get("DEEPINFRA_TOKEN"))
+  |> ml.kmeans(k: 2..8, on: "embedding", out: "cluster")
+  |> ml.umap(dims: 2, on: "embedding", out: "umap")
+  |> viz.scatter(x: "umap1", y: "umap2", color: "cluster", label: "text", display: ["labels", "legend"])
+```
+
+### Error handling
+
+```
+result = load("data.csv")
+  |> filter(it.score > 0.5)
+
+match(result,
+  Ok(data): data |> print(),
+  Err(msg):  print(msg)
+)
+```
+
+---
+
+See [docs/language.md](docs/language.md) for the full reference and [examples/](examples/) for more.
