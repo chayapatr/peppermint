@@ -1,6 +1,22 @@
 # Changelog
 
-# 0.3.1 — 2026-05-25
+## 0.3.2 — 2026-05-25
+
+### LSP
+
+- `pep lsp` : Language Server Protocol server over stdio, works with any LSP-capable editor
+- Diagnostics : parse errors and undefined name references shown inline
+- Hover : function signature and description for all stdlib and lib functions
+- Completions : stdlib names, namespace-aware (`ml.`, `math.`, etc.), user-defined variables
+- Go-to-definition : jumps to assignment site for user-defined names
+- `pip install peppermint-lang[lsp]` to install
+
+### VSCode extension (`ecosystem/vscode-peppermint`)
+
+- Upgraded from syntax-only to full LSP client
+- Launches `pep lsp` automatically on `.pep` file open
+
+## 0.3.1 — 2026-05-25
 
 - fix README.md for PyPI
 

@@ -7,6 +7,7 @@ import tempfile
 import subprocess
 import platform
 from ..bridge import ok, err, get_rows, to_python
+from ..stdlib.core import pep_signature
 
 
 _FONT = "Helvetica Neue"
@@ -36,7 +37,9 @@ def _to_df(data):
     return pd.DataFrame(get_rows(data))
 
 
+@pep_signature('viz.scatter(x: str, y: str, color?: str, label?: str, display?: List<str>) -> List<Row>')
 def scatter(data, x=None, y=None, color=None, label=None, title=None, display=None, _interp=None, _env=None, **_):
+    """Scatter plot. `display` controls what's shown: "axes", "labels", "legend", "title"."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -87,7 +90,9 @@ def scatter(data, x=None, y=None, color=None, label=None, title=None, display=No
         return err(str(e))
 
 
+@pep_signature("viz.histogram(col: str) -> List<Row>")
 def histogram(data, col=None, **_):
+    """Histogram of a column."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -106,7 +111,9 @@ def histogram(data, col=None, **_):
         return err(str(e))
 
 
+@pep_signature("viz.heatmap() -> List<Row>")
 def heatmap(data, **_):
+    """Correlation heatmap of all numeric columns."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -124,7 +131,9 @@ def heatmap(data, **_):
         return err(str(e))
 
 
+@pep_signature("viz.plot() -> List<Row>")
 def plot(data, **_):
+    """Auto-plot based on data shape."""
     try:
         df = _to_df(data)
         num_cols = df.select_dtypes(include="number").columns.tolist()
@@ -138,7 +147,9 @@ def plot(data, **_):
         return err(str(e))
 
 
+@pep_signature("viz.grid(...) -> List<Row>")
 def grid(*datasets, **_):
+    """Multiple plots side by side."""
     try:
         import matplotlib
         matplotlib.use("Agg")

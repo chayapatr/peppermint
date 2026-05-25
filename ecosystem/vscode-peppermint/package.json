@@ -1,17 +1,30 @@
 {
   "name": "vscode-peppermint",
   "displayName": "Peppermint",
-  "description": "Syntax highlighting for Peppermint (.pep) files",
-  "version": "0.1.0",
+  "description": "Language support for Peppermint (.pep) files",
+  "version": "0.2.0",
   "publisher": "peppermint",
-  "engines": { "vscode": "^1.75.0" },
-  "categories": ["Programming Languages"],
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:peppermint"
+  ],
   "contributes": {
     "languages": [
       {
         "id": "peppermint",
-        "aliases": ["Peppermint", "pep"],
-        "extensions": [".pep"],
+        "aliases": [
+          "Peppermint",
+          "pep"
+        ],
+        "extensions": [
+          ".pep"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -22,5 +35,22 @@
         "path": "./syntaxes/peppermint.tmLanguage.json"
       }
     ]
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/vscode": "^1.120.0",
+    "esbuild": "^0.28.0",
+    "typescript": "^5.9.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/chayapatr/peppermint"
+  },
+  "scripts": {
+    "compile": "esbuild extension.ts --bundle --outfile=out/extension.js --external:vscode --platform=node --format=cjs --sourcemap",
+    "vscode:prepublish": "npm run compile"
   }
 }

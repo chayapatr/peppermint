@@ -158,7 +158,14 @@ def main():
 
     args = ap.parse_args()
 
-    if args.file:
+    if args.file == "lsp":
+        try:
+            from .lsp.server import start
+        except ImportError as e:
+            print(f"LSP server not available: {e}\nInstall with: pip install peppermint-lang[lsp]", file=sys.stderr)
+            sys.exit(1)
+        start()
+    elif args.file:
         run_file(args)
     else:
         run_repl(args)

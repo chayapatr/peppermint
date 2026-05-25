@@ -4,6 +4,7 @@ Python functions receive plain list[dict], return plain list[dict].
 """
 from __future__ import annotations
 from ..bridge import ok, err, get_rows, from_python, to_python
+from ..stdlib.core import pep_signature
 
 
 def _to_df(data):
@@ -31,7 +32,9 @@ def _eval_arg(arg, interp, env):
     return arg
 
 
+@pep_signature("ml.kmeans(k: Int | Range, on: str, out: str) -> List<Row>")
 def kmeans(data, k=None, on=None, out=None, _interp=None, _env=None, **_):
+    """K-means clustering. `k` accepts a range for auto-selection by silhouette score."""
     try:
         import numpy as np
         from sklearn.cluster import KMeans
@@ -81,7 +84,9 @@ def kmeans(data, k=None, on=None, out=None, _interp=None, _env=None, **_):
         return err(str(e))
 
 
+@pep_signature("ml.ols(on: str, out: str) -> List<Row>")
 def ols(data, on=None, out=None, _interp=None, _env=None, **_):
+    """OLS regression. Adds predicted and residual columns. Prints R² to stderr."""
     try:
         from sklearn.linear_model import LinearRegression
 
@@ -115,7 +120,9 @@ def ols(data, on=None, out=None, _interp=None, _env=None, **_):
         return err(str(e))
 
 
+@pep_signature("ml.umap(dims: Int, on: str, out: str) -> List<Row>")
 def umap(data, dims=2, on=None, out=None, _interp=None, _env=None, **_):
+    """Dimensionality reduction. Adds `out1`, `out2` columns (or explicit names if `out` is a list)."""
     try:
         import numpy as np
         import umap as umap_lib
@@ -156,7 +163,9 @@ def umap(data, dims=2, on=None, out=None, _interp=None, _env=None, **_):
         return err(str(e))
 
 
+@pep_signature("ml.embed(on: str, out: str, source: str, model: str, apikey: str) -> List<Row>")
 def embed(data, on=None, out=None, source=None, model=None, apikey=None, _interp=None, _env=None, **_):
+    """Add a text embedding column. Calls an external embedding API."""
     try:
         on     = _eval_arg(on,     _interp, _env)
         out    = _eval_arg(out,    _interp, _env)
@@ -196,7 +205,9 @@ def embed(data, on=None, out=None, source=None, model=None, apikey=None, _interp
         return err(str(e))
 
 
+@pep_signature("ml.silhouette(on: str) -> List<Row>")
 def silhouette(data, on=None, _interp=None, _env=None, **_):
+    """Score current clustering. Prints silhouette score to stderr."""
     try:
         from sklearn.metrics import silhouette_score
         import sys
