@@ -1,11 +1,22 @@
 # Peppermint
 
-A pipe-first language for data and ML work, running on top of Python. Every operation is a pipeline step and errors propagate automatically. The Python ecosystem (pandas, scikit-learn, or your own code) is accessible from within the language.
+A pipe-first language for data and ML work, running on top of Python. Every operation is a pipeline step and errors propagate automatically.
 
 ## Install
 
 ```sh
 pip install peppermint-lang
+pip install peppermint-lang[lsp]   # + language server
+pip install peppermint-lang[ml]    # + scikit-learn, umap, openai
+pip install peppermint-lang[all]   # everything
+```
+
+Or from source:
+
+```sh
+git clone https://github.com/chayapatr/peppermint
+cd peppermint
+pip install -e ".[all]"
 ```
 
 ## Run
@@ -13,11 +24,10 @@ pip install peppermint-lang
 ```sh
 pep file.pep  # run a file
 pep           # interactive REPL
+pep lsp       # start language server (stdio)
 ```
 
 ## Examples
-
-### Transform
 
 ```
 load("employees.csv")
@@ -35,32 +45,6 @@ Each step prints a live summary:
 |> sort      → List  843 rows × 6 cols
 ```
 
-### Aggregate
-
-```
-load("sales.csv")
-  |> collapse(by: "region",
-      avg: mean(col.revenue),
-      n:   count()
-  )
-  |> sort(by: "avg", dir: "desc")
-  |> print()
-```
-
-### Top N per group
-
-```
-load("sales.csv")
-  |> each(by: "region",
-      |> add(rank: rank(col.revenue, dir: "desc"))
-      |> filter(it.rank <= 3)
-      |> drop("rank")
-  )
-  |> print()
-```
-
-### ML pipeline
-
 ```
 use ml
 use viz
@@ -76,7 +60,38 @@ load("data.csv")
   |> viz.scatter(x: "umap_1", y: "umap_2", color: "cluster", label: "text", display: ["labels", "legend"])
 ```
 
-### Error handling
+<details>
+<summary>Aggregate</summary>
+
+```
+load("sales.csv")
+  |> collapse(by: "region",
+      avg: mean(col.revenue),
+      n:   count()
+  )
+  |> sort(by: "avg", dir: "desc")
+  |> print()
+```
+
+</details>
+
+<details>
+<summary>Top N per group</summary>
+
+```
+load("sales.csv")
+  |> each(by: "region",
+      |> add(rank: rank(col.revenue, dir: "desc"))
+      |> filter(it.rank <= 3)
+      |> drop("rank")
+  )
+  |> print()
+```
+
+</details>
+
+<details>
+<summary>Error handling</summary>
 
 ```
 result = load("data.csv")
@@ -88,6 +103,43 @@ match(result,
 )
 ```
 
+</details>
+
+<details>
+<summary>Python bridge</summary>
+
+```
+use "./transforms.py" as t
+
+load("data.csv")
+  |> t.clean()
+  |> print()
+```
+
+Python functions receive and return plain Python types. Conversion is automatic.
+
+</details>
+
 ---
 
-See [docs/language.md](docs/language.md) for the full reference and [examples/](examples/) for more.
+## Editor support
+
+The LSP server (`pep lsp`) provides diagnostics, hover docs, completions, and go-to-definition for any LSP-capable editor.
+
+**VSCode** — install the extension from `ecosystem/vscode-peppermint/`. It auto-discovers `pep` via mise, pyenv, or Homebrew — no PATH setup needed.
+
+**Neovim**:
+
+```lua
+vim.lsp.start({ name = "peppermint", cmd = { "pep", "lsp" }, root_dir = vim.fn.getcwd() })
+```
+
+**Helix** (`~/.config/helix/languages.toml`):
+
+```toml
+[language-server.peppermint-lsp]
+command = "pep"
+args = ["lsp"]
+```
+
+See [docs/ecosystem.md](docs/ecosystem.md) for full editor setup and [docs/language.md](docs/language.md) for the complete language reference.
