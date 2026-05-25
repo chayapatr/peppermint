@@ -92,12 +92,18 @@ def map_(data, transform, concurrent=None, _interp=None, _env=None, **_) -> list
     return [_unwrap(fn(item)) for item in items]
 
 
-@pep_signature("mapi(expr: Expr) -> List<Any>")
-def mapi(data, transform, _interp=None, _env=None, **_) -> list:
-    """map with index. `it` is `{ idx: Int, value: Any }`."""
+@pep_signature("mapi(expr: Expr, concurrent: Int?) -> List<Any>")
+def mapi(data, transform, concurrent=None, _interp=None, _env=None, **_) -> list:
+    """map with index. `it` is `{ idx: Int, value: Any }`. `concurrent: N` runs in a thread pool with N workers."""
+    concurrent = int(_eval_arg(concurrent, _interp, _env)) if concurrent is not None else None
     items = _to_list(data)
     fn = _interp.make_row_fn(transform, _env)
-    return [_unwrap(fn({"idx": i, "value": x})) for i, x in enumerate(items)]
+    indexed = [{"idx": i, "value": x} for i, x in enumerate(items)]
+    if concurrent:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=concurrent) as pool:
+            return list(pool.map(lambda item: _unwrap(fn(item)), indexed))
+    return [_unwrap(fn(item)) for item in indexed]
 
 
 @pep_signature("add(field: Expr, concurrent: Int?) -> List<Row>")

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "peppermint-lang"
-version = "0.3.2"
+version = "0.3.3"
 description = "A pipe-first language for data and ML work, running on top of Python"
 readme = "README.md"
 license = "MIT"

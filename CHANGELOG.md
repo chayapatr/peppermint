@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.3 — 2026-05-25
+
+### Standard library
+
+- `add(concurrent: N)` : runs field expression in parallel using N threads; preserves row order
+- `map(concurrent: N)` : same for `map`
+- `mapi(concurrent: N)` : same for `mapi`
+
+### ml (breaking)
+
+- `ml.umap` output columns renamed from `out1`/`out2` to `out_1`/`out_2` for consistency (e.g. `umap_1`, `umap_2`)
+
+### LSP
+
+- Block-local names no longer flagged as undefined (e.g. assignments inside `( )` blocks)
+- Pattern-bound names (`Ok(data)`, `Err(msg)`) no longer flagged as undefined
+- Hover tooltips for keywords: `match`, `use`, `true`, `false`, `none`, `it`, `col`
+- Hover tooltips for operators: `|>`, `->`
+
 ## 0.3.2 — 2026-05-25
 
 ### LSP
