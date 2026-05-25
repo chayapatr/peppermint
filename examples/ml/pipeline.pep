@@ -2,15 +2,11 @@ use ml
 use viz
 use env
 
-
-
-
 load("examples/data.csv")
-  |> ml.embed(
-      on: "name", out: "embedding",
+  |> add(embedding: ml.embed(it.name,
       source: "deepinfra",
       model: "Qwen/Qwen3-Embedding-4B",
-      apikey: env.get("DEEPINFRA_TOKEN"))
+      apikey: env.get("DEEPINFRA_TOKEN")))
   |> ml.kmeans(k: 2, on: "embedding", out: "cluster")
   |> ml.umap(dims: 2, on: "embedding", out: "umap")
   |> viz.scatter(

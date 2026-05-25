@@ -165,44 +165,32 @@ def umap(data, dims=2, on=None, out=None, _interp=None, _env=None, **_):
         return err(str(e))
 
 
-@pep_signature("ml.embed(on: str, out: str, source: str, model: str, apikey: str) -> List<Row>")
-def embed(data, on=None, out=None, source=None, model=None, apikey=None, _interp=None, _env=None, **_):
-    """Add a text embedding column. Calls an external embedding API."""
+@pep_signature("ml.embed(text: str, source: str, model: str, apikey: str) -> List<Num>")
+def embed(text, source=None, model=None, apikey=None, _interp=None, _env=None, **_):
+    """Embed a single text string. Use inside `add`: `add(embedding: ml.embed(it.name, ...))`."""
     try:
-        on     = _eval_arg(on,     _interp, _env)
-        out    = _eval_arg(out,    _interp, _env)
+        text   = _eval_arg(text,   _interp, _env)
         source = _eval_arg(source, _interp, _env)
         model  = _eval_arg(model,  _interp, _env)
         apikey = _eval_arg(apikey, _interp, _env)
 
-        if on is None:
-            return err("embed: on is required (input column)")
-        if out is None:
-            return err("embed: out is required")
         if source is None:
             return err("embed: source is required (e.g. source: \"deepinfra\" or source: \"local\")")
         if model is None:
             return err("embed: model is required")
-
-        df = _to_df(data)
-        texts = df[on].tolist()
 
         if source == "deepinfra":
             if apikey is None:
                 return err("embed: apikey is required for source 'deepinfra'")
             from openai import OpenAI
             client = OpenAI(api_key=apikey, base_url="https://api.deepinfra.com/v1/openai")
-            resp = client.embeddings.create(model=model, input=texts, encoding_format="float")
-            embeddings = [item.embedding for item in resp.data]
+            resp = client.embeddings.create(model=model, input=[text], encoding_format="float")
+            return resp.data[0].embedding
         elif source == "local":
             from sentence_transformers import SentenceTransformer
-            embeddings = [v.tolist() for v in SentenceTransformer(model).encode(texts)]
+            return SentenceTransformer(model).encode([text])[0].tolist()
         else:
             return err(f"embed: unknown source '{source}' (use 'deepinfra' or 'local')")
-
-        df = df.copy()
-        df[out] = embeddings
-        return ok(_from_df(df))
     except Exception as e:
         return err(str(e))
 

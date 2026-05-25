@@ -3,12 +3,11 @@ use env
 use ml
 
 load("examples/data.csv")
-  # run text embeddidng
-  |> ml.embed(
-      on: "name", out: "embedding",
+  # run text embedding
+  |> add(embedding: ml.embed(it.name,
       source: "deepinfra",
       model: "Qwen/Qwen3-Embedding-4B",
-      apikey: env.get("DEEPINFRA_TOKEN"))
+      apikey: env.get("DEEPINFRA_TOKEN")))
   
   # run top-level k-means
   |> ml.kmeans(k: 2..6, on: "embedding", out: "cluster")

@@ -67,10 +67,9 @@ use viz
 use env
 
 load("data.csv")
-  |> ml.embed(
-      on: "text", out: "embedding",
+  |> add(embedding: ml.embed(it.text,
       source: "deepinfra", model: "Qwen/Qwen3-Embedding-4B",
-      apikey: env.get("DEEPINFRA_TOKEN"))
+      apikey: env.get("DEEPINFRA_TOKEN")))
   |> ml.kmeans(k: 2..8, on: "embedding", out: "cluster")
   |> ml.umap(dims: 2, on: "embedding", out: "umap")
   |> viz.scatter(x: "umap1", y: "umap2", color: "cluster", label: "text", display: ["labels", "legend"])
