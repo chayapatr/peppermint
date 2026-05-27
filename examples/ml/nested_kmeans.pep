@@ -1,6 +1,7 @@
 use viz
 use env
 use ml
+use text
 
 result = load("examples/data.csv")
   # run text embedding
@@ -23,7 +24,7 @@ result = load("examples/data.csv")
         out: "umap")
   |> viz.scatter(
       x: "umap_1", y: "umap_2", color: "cluster",
-      label: "name", display: ["labels"])
+      display: { label: "name" })
 
   # run nested kmeans + viz
   |> each(by: "cluster",
@@ -37,10 +38,10 @@ result = load("examples/data.csv")
         out: "innerumap")
     |> viz.scatter(
       x: "innerumap_1", y: "innerumap_2", color: "innercluster",
-      label: "name", display: ["labels"])
+      display: { label: "name" })
     )
 
 match(result,
   Ok(data): print(data),
-  Err(msg): print(str.join(["error: ", msg]))
+  Err(msg): print(text.join(["error: ", msg]))
 )

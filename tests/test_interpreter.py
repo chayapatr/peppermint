@@ -366,7 +366,7 @@ def test_match_stored_ok_value():
 def test_reduce_mapi_in_lambda():
     result = val("""
 index_in = lst -> val -> reduce(
-  mapi(lst, { idx: it.idx, found: it.value == val }),
+  mapi(lst, { idx: it.idx, found: it.val == val }),
   none,
   (acc, row) -> match(acc, none: match(row.found, true: row.idx, _: none), _: acc)
 )
@@ -378,7 +378,7 @@ index_in(items)("b")
 def test_reduce_mapi_in_lambda_first():
     result = val("""
 index_in = lst -> val -> reduce(
-  mapi(lst, { idx: it.idx, found: it.value == val }),
+  mapi(lst, { idx: it.idx, found: it.val == val }),
   none,
   (acc, row) -> match(acc, none: match(row.found, true: row.idx, _: none), _: acc)
 )
@@ -432,3 +432,117 @@ def test_each_preserves_group_key():
 |> each(by: "cat", |> collapse(n: count()))
 """)
     assert all("cat" in r for r in result)
+
+
+# --- collapse with lambda ---
+
+def test_collapse_lambda():
+    result = val("""
+[{ g: "a", v: 1 }, { g: "a", v: 2 }, { g: "b", v: 3 }]
+|> collapse(by: "g", total: rows -> rows |> collapse(s: sum(col.v)) |> get(0))
+""")
+    assert isinstance(result, list)
+    by_g = {r["g"]: r["total"]["s"] for r in result}
+    assert by_g["a"] == 3
+    assert by_g["b"] == 3
+
+
+def test_collapse_lambda_no_by():
+    result = val("""
+[{ v: 1 }, { v: 2 }, { v: 3 }]
+|> collapse(total: rows -> rows |> collapse(s: sum(col.v)) |> get(0))
+""")
+    assert result[0]["total"]["s"] == 6
+
+
+# --- mean/sum on vector columns ---
+
+def test_collapse_mean_vector():
+    result = val("""
+[{ g: "a", vec: [1.0, 2.0] }, { g: "a", vec: [3.0, 4.0] }, { g: "b", vec: [10.0, 20.0] }]
+|> collapse(by: "g", centroid: mean(col.vec))
+""")
+    assert isinstance(result, list)
+    by_g = {r["g"]: r["centroid"] for r in result}
+    assert by_g["a"] == [2.0, 3.0]
+    assert by_g["b"] == [10.0, 20.0]
+
+
+def test_collapse_sum_vector():
+    result = val("""
+[{ vec: [1.0, 2.0] }, { vec: [3.0, 4.0] }]
+|> collapse(total: sum(col.vec))
+""")
+    assert result[0]["total"] == [4.0, 6.0]
+
+
+# --- join + centroid pattern ---
+
+def test_join_centroid_pattern():
+    result = val("""
+data = [
+    { g: "a", v: 1.0 },
+    { g: "a", v: 3.0 },
+    { g: "b", v: 10.0 }
+]
+centroids = data |> collapse(by: "g", centroid: mean(col.v))
+data |> join(centroids, on: "g")
+""")
+    assert isinstance(result, list)
+    assert len(result) == 3
+    assert all("centroid" in r for r in result)
+    a_rows = [r for r in result if r["g"] == "a"]
+    assert all(r["centroid"] == 2.0 for r in a_rows)
+
+
+# --- object bare keys ---
+
+def test_obj_bare_key_true():
+    result = val('{ legend, axes }')
+    assert result == {"legend": True, "axes": True}
+
+
+def test_obj_bare_key_mixed():
+    result = val('{ legend, title: "hello" }')
+    assert result == {"legend": True, "title": "hello"}
+
+
+# --- text.parse ---
+
+def test_text_parse_list():
+    result = val('use text\ntext.parse("[1, 2, 3]")')
+    assert result == [1, 2, 3]
+
+
+def test_text_parse_dict():
+    result = val('use text\ntext.parse("{\\"a\\": 1}")')
+    assert result == {"a": 1}
+
+
+# --- model shorthand resolves correctly ---
+
+def test_resolve_model_load():
+    import os, tempfile
+    from peppermint.libs.ml import _resolve_model
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        path = f.name
+    try:
+        load_path, save_path = _resolve_model(path, None, None)
+        assert load_path == path
+        assert save_path is None
+    finally:
+        os.unlink(path)
+
+
+def test_resolve_model_save():
+    from peppermint.libs.ml import _resolve_model
+    load_path, save_path = _resolve_model("/nonexistent/path", None, None)
+    assert load_path is None
+    assert save_path == "/nonexistent/path"
+
+
+def test_resolve_model_explicit():
+    from peppermint.libs.ml import _resolve_model
+    load_path, save_path = _resolve_model(None, "save.pkl", "load.pkl")
+    assert load_path == "load.pkl"
+    assert save_path == "save.pkl"

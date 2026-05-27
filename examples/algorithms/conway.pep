@@ -1,4 +1,4 @@
-use str
+use text
 use math
 
 W = 8
@@ -27,7 +27,7 @@ next_gen = grid -> mapi(grid,next_cell(grid, it.idx % W, math.floor(it.idx / W))
 render = grid -> (
   row  = i -> match(i % W, 0: "\n", _: "")
   cell = i -> match(grid[i], 1: "#", _: ".")
-  str.join(mapi(grid, str.join([row(it.idx), cell(it.idx)], "")), "")
+  text.join(mapi(grid, text.join([row(it.idx), cell(it.idx)], "")), "")
 )
 
 run = (grid, n) -> match(n, 0: grid, _: run(next_gen(grid), n - 1))

@@ -16,6 +16,7 @@ _FONT = "Helvetica Neue"
 def _setup_font():
     import matplotlib.pyplot as plt
     plt.rcParams["font.family"] = _FONT
+    plt.rcParams["font.sans-serif"] = [_FONT, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", "DejaVu Sans"]
 
 
 def _show(fig):
@@ -38,32 +39,59 @@ def _to_df(data):
 
 
 @pep_fn
-@pep_signature('viz.scatter(x: str, y: str, color?: str, label?: str, display?: List<str>) -> List<Row>')
-def scatter(data, x=None, y=None, color=None, label=None, title=None, display=None):
-    """Scatter plot. `display` controls what's shown: "axes", "labels", "legend", "title"."""
+@pep_signature('viz.scatter(x: str, y: str, color?: str, size?: List<Int>, display?: { label?: str, legend?, axes?, title?: str, dotsize?: Int | str }) -> List<Row>')
+def scatter(data, x=None, y=None, color=None, label=None, title=None, size=None, display=None):
+    """Scatter plot. Passes data through unchanged.
+
+`x`, `y`: column names for axes.
+`color`: column to color points by.
+`size`: figure dimensions `[width, height]` in inches (default matplotlib size).
+`display`: object with visual options:
+  - `label: "col"` — annotate points with column values (skips none/NaN)
+  - `legend` — show color legend
+  - `axes` — show axis labels and ticks
+  - `title: "..."` — plot title
+  - `dotsize: N | "col"` — uniform dot size or column-mapped size"""
     try:
         import matplotlib
         matplotlib.use("Agg")
         import matplotlib.pyplot as plt
         _setup_font()
 
-        display = display or []
-        show = set(display)
+        if isinstance(display, dict):
+            show = {k for k, v in display.items() if v}
+            label = display.get("label") if isinstance(display.get("label"), str) else label
+            title = display.get("title") if isinstance(display.get("title"), str) else title
+            dotsize = display.get("dotsize")
+        else:
+            show = set(display or [])
+            dotsize = None
 
         df = _to_df(data)
-        fig, ax = plt.subplots()
+        figsize = (size[0], size[1]) if isinstance(size, list) and len(size) == 2 else None
+        fig, ax = plt.subplots(figsize=figsize)
+
+        def _resolve_dotsize(group):
+            if dotsize is None:
+                return {}
+            if isinstance(dotsize, str) and dotsize in group.columns:
+                return {"s": group[dotsize].values}
+            return {"s": dotsize}
 
         if color and color in df.columns:
             for name, group in df.groupby(color):
-                ax.scatter(group[x], group[y], label=str(name), alpha=0.7)
+                ax.scatter(group[x], group[y], label=str(name), alpha=0.7, **_resolve_dotsize(group))
             if "legend" in show:
                 ax.legend()
         else:
-            ax.scatter(df[x], df[y], alpha=0.7)
+            ax.scatter(df[x], df[y], alpha=0.7, **_resolve_dotsize(df))
 
-        if "labels" in show and label and label in df.columns:
+        if "label" in show and label and label in df.columns:
             for _, row in df.iterrows():
-                ax.annotate(str(row[label]), (row[x], row[y]),
+                val = row[label]
+                if val is None or (isinstance(val, float) and __import__("math").isnan(val)):
+                    continue
+                ax.annotate(str(val), (row[x], row[y]),
                             textcoords="offset points", xytext=(5, 5), fontsize=8)
 
         if "axes" in show:
@@ -88,7 +116,7 @@ def scatter(data, x=None, y=None, color=None, label=None, title=None, display=No
 @pep_fn
 @pep_signature("viz.histogram(col: str) -> List<Row>")
 def histogram(data, col=None):
-    """Histogram of a column."""
+    """Histogram of a single column. `col`: column name. Bin count chosen automatically. Passes data through unchanged."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -107,7 +135,7 @@ def histogram(data, col=None):
 
 @pep_signature("viz.heatmap() -> List<Row>")
 def heatmap(data, **_):
-    """Correlation heatmap of all numeric columns."""
+    """Correlation heatmap of all numeric columns. No parameters needed. Passes data through unchanged."""
     try:
         import matplotlib
         matplotlib.use("Agg")
@@ -127,7 +155,7 @@ def heatmap(data, **_):
 
 @pep_signature("viz.plot() -> List<Row>")
 def plot(data, **_):
-    """Auto-plot based on data shape."""
+    """Auto-plot based on data shape: scatter if 2+ numeric columns, histogram if 1. Passes data through unchanged."""
     try:
         df = _to_df(data)
         num_cols = df.select_dtypes(include="number").columns.tolist()
@@ -143,7 +171,7 @@ def plot(data, **_):
 
 @pep_signature("viz.grid(...) -> List<Row>")
 def grid(*datasets, **_):
-    """Multiple plots side by side."""
+    """Multiple scatter plots side by side. Pass datasets as positional args: `viz.grid(data1, data2)`. Each panel auto-picks the first two numeric columns. Returns the first dataset unchanged."""
     try:
         import matplotlib
         matplotlib.use("Agg")

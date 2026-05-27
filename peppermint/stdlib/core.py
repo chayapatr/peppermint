@@ -4,6 +4,10 @@ from typing import Any
 import pandas as pd
 from ..interpreter import Ok, Err, PmFunction, ColRef
 
+builtins_str = str
+builtins_int = int
+builtins_float = float
+
 
 def pep_signature(sig: str):
     """Decorator that attaches a Peppermint-facing signature string to a stdlib function."""
@@ -93,12 +97,13 @@ def map_(data, transform, concurrent=None, _interp=None, _env=None, **_) -> list
 
 
 @pep_signature("mapi(expr: Expr, concurrent: Int?) -> List<Any>")
+
 def mapi(data, transform, concurrent=None, _interp=None, _env=None, **_) -> list:
-    """map with index. `it` is `{ idx: Int, value: Any }`. `concurrent: N` runs in a thread pool with N workers."""
+    """map with index. `it` is `{ idx: Int, val: Any }`. `concurrent: N` runs in a thread pool with N workers."""
     concurrent = int(_eval_arg(concurrent, _interp, _env)) if concurrent is not None else None
     items = _to_list(data)
     fn = _interp.make_row_fn(transform, _env)
-    indexed = [{"idx": i, "value": x} for i, x in enumerate(items)]
+    indexed = [{"idx": i, "val": x} for i, x in enumerate(items)]
     if concurrent:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=concurrent) as pool:
@@ -106,21 +111,25 @@ def mapi(data, transform, concurrent=None, _interp=None, _env=None, **_) -> list
     return [_unwrap(fn(item)) for item in indexed]
 
 
-@pep_signature("add(field: Expr, concurrent: Int?) -> List<Row>")
+@pep_signature("add(field: Expr, concurrent: Int?, retry: Int?) -> List<Row>")
 def add(data, _interp=None, _env=None, **kwargs) -> list:
-    """Add a new field to every row. Use `it.field` or `col.field` expressions. `concurrent: N` runs the expression in a thread pool with N workers."""
+    """Add a new field to every row. Use `it.field` or `col.field` expressions. `concurrent: N` runs in a thread pool. `retry: N` retries on failure before writing `none`."""
+    import sys
     concurrent = kwargs.pop("concurrent", None)
+    retry      = kwargs.pop("retry", None)
     if concurrent is not None:
         concurrent = int(_eval_arg(concurrent, _interp, _env))
+    if retry is not None:
+        retry = int(_eval_arg(retry, _interp, _env))
 
-    non_meta = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+    non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth")}
     if len(non_meta) != 1:
         raise ValueError("add() requires exactly one keyword argument: the new field name")
     field, expr = next(iter(non_meta.items()))
 
     # Evaluate the expression to check if it's a column-level operation
     val = _unwrap(_eval_arg(expr, _interp, _env))
-    if isinstance(val, (_AggFn, _RankFn, _RollingFn)):
+    if hasattr(val, "broadcast"):
         df = pd.DataFrame(_to_list(data))
         series = val.broadcast(df)
         rows = df.copy()
@@ -129,14 +138,31 @@ def add(data, _interp=None, _env=None, **kwargs) -> list:
 
     fn = _interp.make_row_fn(expr, _env)
     rows = _to_list(data)
+    failures = [0]
+
+    def _run(row):
+        attempts = retry + 1 if retry else 1
+        last_exc = None
+        for _ in range(attempts):
+            try:
+                return _unwrap(fn(row))
+            except Exception as e:
+                last_exc = e
+        failures[0] += 1
+        print(f"add({field}): failed after {attempts} attempt(s): {last_exc}", file=sys.stderr)
+        return None
 
     if concurrent:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=concurrent) as pool:
-            values = list(pool.map(lambda row: _unwrap(fn(row)), rows))
-        return [{**row, field: v} for row, v in zip(rows, values)]
+            values = list(pool.map(_run, rows))
+    else:
+        values = [_run(row) for row in rows]
 
-    return [{**row, field: _unwrap(fn(row))} for row in rows]
+    if failures[0]:
+        print(f"add({field}): {failures[0]}/{len(rows)} rows failed, written as none", file=sys.stderr)
+
+    return [{**row, field: v} for row, v in zip(rows, values)]
 
 
 @pep_signature("take(n: Int) -> List<Row>")
@@ -198,7 +224,7 @@ def reduce(data, init, fn, _interp=None, _env=None, **_) -> Any:
 
 
 @pep_signature("each(by: str, |> ...) -> List<Row>")
-def each(data, by=None, _block=None, _interp=None, _env=None, **_):
+def each(data, by=None, _block=None, _interp=None, _env=None, _depth=0, **_):
     """Run a sub-pipe for each group. Results are concatenated, or original table returned for side effects."""
     from ..ast_nodes import Pipe, Literal
 
@@ -219,7 +245,7 @@ def each(data, by=None, _block=None, _interp=None, _env=None, **_):
 
     for key, group_rows in groups.items():
         pipe = Pipe(steps=[Literal(group_rows)] + list(_block))
-        result = _interp.eval_pipe(pipe, _env)
+        result = _interp.eval_pipe(pipe, _env, depth=_depth + 1)
         if isinstance(result, Err):
             return result
         value = result.value if isinstance(result, Ok) else result
@@ -268,6 +294,13 @@ class _AggFn:
         if self.op == "count":
             return len(df)
         series = df[self.col_ref.field]
+        if isinstance(series.iloc[0], list):
+            import numpy as np
+            stacked = np.stack(series.tolist())
+            if self.op == "mean": return np.mean(stacked, axis=0).tolist()
+            if self.op == "sum":  return np.sum(stacked, axis=0).tolist()
+            if self.op == "min":  return np.min(stacked, axis=0).tolist()
+            if self.op == "max":  return np.max(stacked, axis=0).tolist()
         if self.op == "sum":  return series.sum()
         if self.op == "mean": return series.mean()
         if self.op == "min":  return series.min()
@@ -316,11 +349,16 @@ def collapse(data, _interp=None, _env=None, **kwargs) -> list:
     df = pd.DataFrame(_to_list(data))
 
     def _agg_group(sub_df):
+        from ..interpreter import PmFunction
         row = {}
         for field, expr in non_meta.items():
             val = _unwrap(_eval_arg(expr, _interp, _env))
             if isinstance(val, _AggFn):
                 row[field] = val.apply(sub_df)
+            elif isinstance(val, PmFunction):
+                group_list = sub_df.to_dict(orient="records")
+                result = _interp._call_pm_function(val, [group_list], {}, None, _env)
+                row[field] = _unwrap(result)
             else:
                 row[field] = val
         return row
@@ -367,6 +405,7 @@ class _RollingFn:
                 lambda s: s.rolling(self.window).agg(op)
             )
         return df[self.col_ref.field].rolling(self.window).agg(op)
+
 
 
 @pep_signature('rank(col.field, by?: str, dir?: "asc" | "desc") -> RankFn')
@@ -433,6 +472,51 @@ def concat(*args, _interp=None, _env=None, **_):
     return result
 
 
+@pep_signature("unique(by: str) -> List<Row>")
+def unique(data, by=None, _interp=None, _env=None, **_):
+    """Remove duplicate rows, keeping the first occurrence. `by` specifies the field to deduplicate on."""
+    by = _eval_arg(by, _interp, _env)
+    rows = _to_list(data)
+    if by is None:
+        seen = set()
+        result = []
+        for row in rows:
+            key = tuple(sorted(row.items()))
+            if key not in seen:
+                seen.add(key)
+                result.append(row)
+        return result
+    seen = set()
+    result = []
+    for row in rows:
+        key = row.get(by)
+        if key not in seen:
+            seen.add(key)
+            result.append(row)
+    return result
+
+
+@pep_signature("str(value: Any) -> str")
+def to_str(value, _interp=None, _env=None, **_):
+    """Convert a value to a string."""
+    v = _unwrap(_eval_arg(value, _interp, _env))
+    return builtins_str(v)
+
+
+@pep_signature("float(value: Any) -> Num")
+def to_float(value, _interp=None, _env=None, **_):
+    """Convert a value to a float."""
+    v = _unwrap(_eval_arg(value, _interp, _env))
+    return builtins_float(v)
+
+
+@pep_signature("int(value: Any) -> Int")
+def to_int(value, _interp=None, _env=None, **_):
+    """Convert a value to an integer."""
+    v = _unwrap(_eval_arg(value, _interp, _env))
+    return builtins_int(v)
+
+
 for _fn in (filter_, map_, mapi, add, sort, reduce, each, collapse, sum_, mean_, count_, min_, max_):
     _fn._accepts_deferred = True
 
@@ -467,4 +551,8 @@ def build_core_env() -> dict:
         "rolling": rolling,
         "concat":  concat,
         "slice":   slice_,
+        "unique":  unique,
+        "str":     to_str,
+        "float":   to_float,
+        "int":     to_int,
     }

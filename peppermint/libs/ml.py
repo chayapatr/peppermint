@@ -21,20 +21,49 @@ def _numeric_cols(df):
     return df.select_dtypes(include=[np.number]).columns.tolist()
 
 
+def _save_model(model, path):
+    import pickle, sys
+    with open(path, "wb") as f:
+        pickle.dump(model, f)
+    print(f"model saved to {path}", file=sys.stderr)
+
+
+def _load_model(path):
+    import pickle
+    with open(path, "rb") as f:
+        return pickle.load(f)
+
+
+def _resolve_model(model, save_model, load_model):
+    """Return (path_to_load_or_None, path_to_save_or_None).
+    `model` shorthand: load if file exists, else fit and save."""
+    import os
+    if model is not None:
+        if os.path.exists(model):
+            return model, None
+        return None, model
+    return load_model, save_model
+
+
 @pep_fn_lazy
-@pep_signature("ml.kmeans(k: Int | Range, on: str, out: str) -> List<Row>")
-def kmeans(data, k=None, on=None, out=None):
-    """K-means clustering. `k` accepts a range for auto-selection by silhouette score."""
+@pep_signature("ml.kmeans(k: Int | Range, on: str, out: str, model?: str, save_model?: str, load_model?: str) -> List<Row>")
+def kmeans(data, k=None, on=None, out=None, model=None, save_model=None, load_model=None):
+    """K-means clustering.
+
+`on`: vector column name (omit to use all numeric cols).
+`k`: number of clusters, or a range (e.g. `2..8`) for auto-selection by silhouette score.
+`out`: name for the cluster label column.
+`model`: load if file exists, else fit and save (shorthand for `save_model`/`load_model`)."""
     import numpy as np
     from sklearn.cluster import KMeans
     from sklearn.metrics import silhouette_score
     from ..interpreter import PmRange
     import sys
 
-    if k is None:
-        return err("kmeans: k is required")
     if out is None:
         return err("kmeans: out is required")
+
+    load_path, save_path = _resolve_model(model, save_model, load_model)
 
     df = _to_df(data)
 
@@ -47,20 +76,29 @@ def kmeans(data, k=None, on=None, out=None):
         X = sub.values
         idx = sub.index
 
-    if isinstance(k, PmRange):
-        best_k, best_score, best_labels = None, -1, None
-        for ki in range(k.start, k.end + 1):
-            model = KMeans(n_clusters=ki, random_state=42, n_init="auto")
-            labels = model.fit_predict(X)
-            if len(set(labels)) > 1:
-                s = silhouette_score(X, labels)
-                if s > best_score:
-                    best_k, best_score, best_labels = ki, s, labels
-        labels = best_labels
-        print(f"kmeans: best k={best_k}, silhouette={best_score:.3f}", file=sys.stderr)
+    if load_path is not None:
+        fitted = _load_model(load_path)
+        labels = fitted.predict(X)
     else:
-        model = KMeans(n_clusters=int(k), random_state=42, n_init="auto")
-        labels = model.fit_predict(X)
+        if k is None:
+            return err("kmeans: k is required")
+        if isinstance(k, PmRange):
+            best_k, best_score, best_model, best_labels = None, -1, None, None
+            for ki in range(k.start, k.end + 1):
+                m = KMeans(n_clusters=ki, random_state=42, n_init="auto")
+                lbls = m.fit_predict(X)
+                if len(set(lbls)) > 1:
+                    s = silhouette_score(X, lbls)
+                    if s > best_score:
+                        best_k, best_score, best_model, best_labels = ki, s, m, lbls
+            fitted, labels = best_model, best_labels
+            print(f"kmeans: best k={best_k}, silhouette={best_score:.3f}", file=sys.stderr)
+        else:
+            fitted = KMeans(n_clusters=int(k), random_state=42, n_init="auto")
+            labels = fitted.fit_predict(X)
+
+        if save_path is not None:
+            _save_model(fitted, save_path)
 
     df = df.copy()
     df.loc[idx, out] = labels.astype(int)
@@ -68,9 +106,14 @@ def kmeans(data, k=None, on=None, out=None):
 
 
 @pep_fn_lazy
-@pep_signature("ml.ols(on: str, out: str) -> List<Row>")
-def ols(data, on=None, out=None):
-    """OLS regression. Adds predicted and residual columns. Prints R² to stderr."""
+@pep_signature("ml.ols(on: str, out: str, model?: str, save_model?: str, load_model?: str) -> List<Row>")
+def ols(data, on=None, out=None, model=None, save_model=None, load_model=None):
+    """OLS regression.
+
+`on`: target column. Uses all other numeric columns as features.
+`out`: name for the predicted values column. Also adds a `residual` column.
+Prints R² and per-feature coefficients to stderr.
+`model`: load if file exists, else fit and save."""
     from sklearn.linear_model import LinearRegression
     import sys
 
@@ -79,36 +122,58 @@ def ols(data, on=None, out=None):
     if out is None:
         return err("ols: out is required")
 
+    load_path, save_path = _resolve_model(model, save_model, load_model)
+
     df = _to_df(data)
     num_cols = [c for c in _numeric_cols(df) if c != on]
     X = df[num_cols].dropna()
-    y = df.loc[X.index, on]
 
-    model = LinearRegression()
-    model.fit(X, y)
-    predicted = model.predict(X)
-    r2 = model.score(X, y)
-    coeffs = dict(zip(num_cols, model.coef_))
-    print(f"ols: R²={r2:.4f}  intercept={model.intercept_:.4f}", file=sys.stderr)
-    for col, coef in coeffs.items():
-        print(f"     {col}: {coef:.4f}", file=sys.stderr)
+    if load_path is not None:
+        fitted = _load_model(load_path)
+    else:
+        y = df.loc[X.index, on]
+        fitted = LinearRegression()
+        fitted.fit(X, y)
+        r2 = fitted.score(X, y)
+        coeffs = dict(zip(num_cols, fitted.coef_))
+        print(f"ols: R²={r2:.4f}  intercept={fitted.intercept_:.4f}", file=sys.stderr)
+        for col, coef in coeffs.items():
+            print(f"     {col}: {coef:.4f}", file=sys.stderr)
+        if save_path is not None:
+            _save_model(fitted, save_path)
+
+    predicted = fitted.predict(X)
     df = df.copy()
     df.loc[X.index, out] = predicted
-    df.loc[X.index, "residual"] = y.values - predicted
+    if load_path is None:
+        y = df.loc[X.index, on]
+        df.loc[X.index, "residual"] = y.values - predicted
     return ok(_from_df(df))
 
 
 @pep_fn_lazy
-@pep_signature("ml.umap(dims: Int, on: str, out: str | List<str>) -> List<Row>")
-def umap(data, dims=2, on=None, out=None):
-    """Dimensionality reduction. `out: \"umap\"` adds `umap_1`, `umap_2`, ... columns. `out: [\"x\", \"y\"]` uses explicit names (length must match `dims`)."""
+@pep_signature("ml.umap(dims: Int, on: str, out: str | List<str>, neighbors?: Int, min_dist?: Num, metric?: str, model?: str, save_model?: str, load_model?: str) -> List<Row>")
+def umap(data, dims=2, on=None, out=None, neighbors=15, min_dist=0.1, metric="euclidean", model=None, save_model=None, load_model=None):
+    """Dimensionality reduction via UMAP.
+
+`dims`: output dimensions (default: 2).
+`on`: vector column (omit to use all numeric cols).
+`out`: column name prefix (e.g. `"umap"` → `umap_1`, `umap_2`) or list of exact names.
+`neighbors`: local vs global structure (default: 15).
+`min_dist`: point spread (default: 0.1).
+`metric`: distance metric (default: `"euclidean"`).
+`model`: load if file exists, else fit and save."""
     import numpy as np
     import umap as umap_lib
 
-    dims = int(dims)
+    dims     = int(dims)
+    neighbors = int(neighbors)
+    min_dist  = float(min_dist)
 
     if out is None:
         return err("umap: out is required")
+
+    load_path, save_path = _resolve_model(model, save_model, load_model)
 
     df = _to_df(data)
 
@@ -124,8 +189,20 @@ def umap(data, dims=2, on=None, out=None):
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        reducer = umap_lib.UMAP(n_components=dims, random_state=42)
-        embedding = reducer.fit_transform(X)
+        if load_path is not None:
+            reducer = _load_model(load_path)
+            embedding = reducer.transform(X)
+        else:
+            reducer = umap_lib.UMAP(
+                n_components=dims,
+                n_neighbors=neighbors,
+                min_dist=min_dist,
+                metric=metric,
+                random_state=42,
+            )
+            embedding = reducer.fit_transform(X)
+            if save_path is not None:
+                _save_model(reducer, save_path)
 
     df = df.copy()
     if isinstance(out, list):
@@ -139,33 +216,108 @@ def umap(data, dims=2, on=None, out=None):
     return ok(_from_df(df))
 
 
+_client_cache: dict = {}
+
 @pep_fn_lazy
+
 @pep_signature("ml.embed(text: str, source: str, model: str, apikey: str) -> List<Num>")
 def embed(text, source=None, model=None, apikey=None):
-    """Embed a single text string. Use inside `add`: `add(embedding: ml.embed(it.name, ...))`."""
+    """Embed a single text string. Use inside `add`.
+
+`source`: `"deepinfra"` or `"local"`.
+`model`: model name (e.g. `"Qwen/Qwen3-Embedding-4B"` or a local SentenceTransformer name).
+`apikey`: required for `"deepinfra"`.
+
+Example: `add(embedding: ml.embed(it.text, source: "deepinfra", model: "...", apikey: env.get("KEY")), concurrent: 50, retry: 3)`"""
     if source is None:
-        return err("embed: source is required (e.g. source: \"deepinfra\" or source: \"local\")")
+        raise ValueError("embed: source is required (e.g. source: \"deepinfra\" or source: \"local\")")
     if model is None:
-        return err("embed: model is required")
+        raise ValueError("embed: model is required")
 
     if source == "deepinfra":
         if apikey is None:
-            return err("embed: apikey is required for source 'deepinfra'")
+            raise ValueError("embed: apikey is required for source 'deepinfra'")
         from openai import OpenAI
-        client = OpenAI(api_key=apikey, base_url="https://api.deepinfra.com/v1/openai")
+        cache_key = ("deepinfra", apikey)
+        if cache_key not in _client_cache:
+            _client_cache[cache_key] = OpenAI(api_key=apikey, base_url="https://api.deepinfra.com/v1/openai")
+        client = _client_cache[cache_key]
         resp = client.embeddings.create(model=model, input=[text], encoding_format="float")
         return resp.data[0].embedding
     elif source == "local":
         from sentence_transformers import SentenceTransformer
-        return SentenceTransformer(model).encode([text])[0].tolist()
+        cache_key = ("local", model)
+        if cache_key not in _client_cache:
+            _client_cache[cache_key] = SentenceTransformer(model)
+        return _client_cache[cache_key].encode([text])[0].tolist()
     else:
-        return err(f"embed: unknown source '{source}' (use 'deepinfra' or 'local')")
+        raise ValueError(f"embed: unknown source '{source}' (use 'deepinfra' or 'local')")
+
+
+
+@pep_fn_lazy
+@pep_signature("ml.llm(prompt: str, source: str, model: str, apikey?: str) -> str")
+def llm(prompt, source=None, model=None, apikey=None):
+    """Run a single LLM call. Use inside `add`.
+
+`source`: `"deepinfra"` or `"openai"`.
+`model`: model name (e.g. `"meta-llama/Llama-3.3-70B-Instruct"`).
+`apikey`: required for `"deepinfra"` and `"openai"`.
+
+Example: `add(label: ml.llm("Classify this post: " + it.title, source: "deepinfra", model: "...", apikey: env.get("KEY")), concurrent: 10, retry: 3)`"""
+    if source is None:
+        raise ValueError("llm: source is required (e.g. source: \"deepinfra\" or source: \"openai\")")
+    if model is None:
+        raise ValueError("llm: model is required")
+
+    if source in ("deepinfra", "openai"):
+        if apikey is None and source == "deepinfra":
+            raise ValueError("llm: apikey is required for source 'deepinfra'")
+        from openai import OpenAI
+        if source == "deepinfra":
+            cache_key = ("deepinfra_llm", apikey)
+            if cache_key not in _client_cache:
+                _client_cache[cache_key] = OpenAI(api_key=apikey, base_url="https://api.deepinfra.com/v1/openai")
+        else:
+            cache_key = ("openai_llm", apikey)
+            if cache_key not in _client_cache:
+                _client_cache[cache_key] = OpenAI(api_key=apikey)
+        client = _client_cache[cache_key]
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.choices[0].message.content
+    else:
+        raise ValueError(f"llm: unknown source '{source}' (use 'deepinfra' or 'openai')")
+
+
+@pep_signature("ml.dist(a: List<Num>, b: List<Num>, metric?: str) -> Num")
+def dist(a, b, metric="cosine", **_):
+    """Distance between two vectors. Returns a scalar. Use inside `add`.
+
+`metric`: `"cosine"` (default) or `"euclidean"`.
+
+Example: `add(dist: ml.dist(it.embedding, it.centroid, metric: "cosine"))`"""
+    import numpy as np
+    A = np.array(a, dtype=float)
+    B = np.array(b, dtype=float)
+    if metric == "cosine":
+        denom = np.linalg.norm(A) * np.linalg.norm(B)
+        return float(1.0 - np.dot(A, B) / max(denom, 1e-10))
+    elif metric == "euclidean":
+        return float(np.linalg.norm(A - B))
+    else:
+        raise ValueError(f"dist: unknown metric '{metric}' (use 'cosine' or 'euclidean')")
 
 
 @pep_fn_lazy
 @pep_signature("ml.silhouette(on: str) -> List<Row>")
 def silhouette(data, on=None):
-    """Score current clustering. Prints silhouette score to stderr."""
+    """Silhouette score for current clustering.
+
+`on`: cluster label column. Uses all other numeric columns as features.
+Prints score to stderr and passes data through unchanged."""
     from sklearn.metrics import silhouette_score
     import sys
 
@@ -188,4 +340,6 @@ def build_ml_env() -> dict:
         "umap":       umap,
         "embed":      embed,
         "silhouette": silhouette,
+        "dist":       dist,
+        "llm":        llm,
     }

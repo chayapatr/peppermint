@@ -12,5 +12,5 @@ load("examples/data.csv")
   |> ml.umap(dims: 2, on: "embedding", out: "umap")
   |> viz.scatter(
     x: "umap_1", y: "umap_2", color: "cluster",
-    label: "name", display: ["labels"]
+    display: { label: "name", legend }
 )

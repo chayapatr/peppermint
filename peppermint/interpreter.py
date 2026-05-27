@@ -275,7 +275,10 @@ class Interpreter:
                 else:
                     raise PepError(f"spread requires an object, got {type(val).__name__}")
             elif isinstance(entry, ObjShorthand):
-                result[entry.key] = env.get(entry.key)
+                try:
+                    result[entry.key] = env.get(entry.key)
+                except Exception:
+                    result[entry.key] = True
         return result
 
     # --- Pipe ---
@@ -287,7 +290,7 @@ class Interpreter:
             result = self.eval(stmt, block_env)
         return result
 
-    def eval_pipe(self, node: Pipe, env: Env) -> Any:
+    def eval_pipe(self, node: Pipe, env: Env, depth: int = 0) -> Any:
         # Source enters the pipe — always wrap in Ok so every step sees Result
         source = self.eval(node.steps[0], env)
         result = source if isinstance(source, (Ok, Err)) else Ok(source)
@@ -308,7 +311,7 @@ class Interpreter:
                 expr = step.expr
                 if isinstance(expr, (Ident, FieldAccess)):
                     expr = Call(func=expr, args=[], kwargs={}, block=None, loc=expr.loc)
-                step_result = self.eval_call(expr, value, env)
+                step_result = self.eval_call(expr, value, env, depth=depth)
                 result = step_result if isinstance(step_result, (Ok, Err)) else Ok(step_result)
             except PepError as e:
                 step_name = self._call_name(step.expr)
@@ -319,15 +322,16 @@ class Interpreter:
 
             after = result.value if isinstance(result, Ok) else result
             if show and isinstance(after, list):
-                self._print_step(step.expr, before, after)
+                self._print_step(step.expr, before, after, depth=depth)
 
         return result
 
-    def _print_step(self, call_node, before: list | None, after: list):
+    def _print_step(self, call_node, before: list | None, after: list, depth: int = 0):
         import sys
+        indent = "  " * depth
         name = self._call_name(call_node)
-        desc = f"\033[2m|>\033[0m \033[36m{name}\033[0m"
-        desc_plain = f"|> {name}"
+        desc = f"{indent}\033[2m|>\033[0m \033[36m{name}\033[0m"
+        desc_plain = f"{indent}|> {name}"
         rows = len(after)
         cols = len(after[0].keys()) if after and isinstance(after[0], dict) else 0
         pad = max(0, 34 - len(desc_plain))
@@ -364,7 +368,7 @@ class Interpreter:
 
     # --- Call ---
 
-    def eval_call(self, node: Call, pipe_value: Any, env: Env, tail: bool = False) -> Any:
+    def eval_call(self, node: Call, pipe_value: Any, env: Env, tail: bool = False, depth: int = 0) -> Any:
         # Resolve the callable
         if isinstance(node.func, FieldAccess):
             ns = self.eval(node.func.obj, env)
@@ -410,7 +414,7 @@ class Interpreter:
                 args = pre + [_unwrap_ok(self.eval(a, env)) for a in node.args]
                 kwargs = {k: _unwrap_ok(self.eval(v, env)) for k, v in node.kwargs.items()}
             if _check_accepts_interp(fn):
-                result = fn(*args, **kwargs, _block=node.block, _env=env, _interp=self)
+                result = fn(*args, **kwargs, _block=node.block, _env=env, _interp=self, _depth=depth)
             else:
                 result = fn(*args, **kwargs)
             # Unwrap nested Ok(Ok(...))

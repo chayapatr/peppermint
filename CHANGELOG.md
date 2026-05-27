@@ -8,6 +8,17 @@
 - `map(concurrent: N)` : same for `map`
 - `mapi(concurrent: N)` : same for `mapi`
 
+### Core (breaking)
+
+- `mapi` row object renamed: `it.value` → `it.val` — shorter and avoids shadowing result type names
+
+- `str(value)`, `int(value)`, `float(value)` type cast functions added to core
+- `use str` renamed to `use text` — avoids conflict with `str()` cast; all functions now under `text.*`
+
+### text
+
+- `text.parse(s)` : parse a JSON string back to a value — useful for embedding columns loaded from CSV
+
 ### math
 
 - Added `math.min`, `math.max`, `math.sum`, `math.median`, `math.clamp(x, lo, hi)`, `math.pow(x, exp)`
@@ -20,9 +31,25 @@
 - All stdlib libs (`ml`, `viz`, `math`, `str`) migrated from `wrap_lib` to `@pep_fn`
 - `wrap_lib` still available for plain Python file imports
 
-### ml (breaking)
+### ml
 
+- `ml.embed` now reuses a single HTTP client per `(source, apikey)` — fixes "too many open files" under concurrent usage
+- `ml.umap(neighbors?, min_dist?, metric?)` : new optional params for local/global structure tuning and distance metric
 - `ml.umap` output columns renamed from `out1`/`out2` to `out_1`/`out_2` for consistency (e.g. `umap_1`, `umap_2`)
+- `ml.kmeans`, `ml.ols`, `ml.umap` accept `model?` shorthand — loads if file exists, fits and saves otherwise; also `save_model?`/`load_model?` for explicit control
+- `ml.dist(a, b, metric?)` : row-level scalar distance between two vectors; use inside `add`: `add(dist: ml.dist(it.embedding, it.centroid))`
+
+### Standard library
+
+- `mean`, `sum`, `min`, `max` inside `collapse` now handle vector (list) columns — element-wise operation via numpy
+- Recommended centroid-distance pattern: `collapse(by, centroid: mean(col.embedding))` + `join` + `add(dist: ml.dist(...))`
+
+### viz (breaking)
+
+- `viz.scatter` `display` parameter now accepts an object: `display: { labels: "col", legend, axes, title: "..." }`
+- Bare keys in object literals (`{ legend, axes }`) are treated as `true` — old list form `display: ["legend"]` still accepted
+- `viz.scatter(size: [w, h])` : figure dimensions in inches
+- `viz.scatter(display: { dotsize: N | "col" })` : uniform dot size or column-mapped variable size
 
 ### LSP
 

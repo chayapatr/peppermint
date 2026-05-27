@@ -9,5 +9,5 @@ load("examples/sales.csv")
   |> viz.scatter(
     x: "predicted",
     y: "residual",
-    display: ["axes"]
+    display: { axes }
   )
