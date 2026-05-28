@@ -549,3 +549,60 @@ def test_resolve_model_explicit():
     load_path, save_path = _resolve_model(None, "save.pkl", "load.pkl")
     assert load_path == "load.pkl"
     assert save_path == "save.pkl"
+
+
+# --- Context artifacts ---
+
+def test_context_artifacts_preserved_through_pipe():
+    from peppermint.context import Context
+    result = ctx("""
+[{ v: 1 }, { v: 2 }]
+|> add(x: it.v * 2)
+|> filter(it.x > 2)
+""")
+    assert isinstance(result, Context)
+    assert result.artifacts == {}
+    assert len(result.data) == 1
+    assert result.data[0]["x"] == 4
+
+
+def test_context_data_field_access():
+    result = unwrap("""
+data = [{ v: 1 }, { v: 2 }, { v: 3 }]
+    |> filter(it.v > 1)
+data.data
+""")
+    assert len(result) == 2
+
+
+def test_context_errors_field_access():
+    result = val("""
+data = [{ v: 1 }, { v: 2 }]
+    |> filter(it.v > 1)
+data.errors
+""")
+    assert result == []
+
+
+def test_llm_format_json_strips_fences():
+    import json, unittest.mock as mock
+    from peppermint.libs.ml import llm as _llm
+    fake_resp = mock.MagicMock()
+    fake_resp.choices[0].message.content = '```json\n{"a": 1}\n```'
+    with mock.patch("peppermint.libs.ml._client_cache", {}):
+        with mock.patch("openai.OpenAI") as MockClient:
+            MockClient.return_value.chat.completions.create.return_value = fake_resp
+            result = _llm("test", source="openai", model="gpt-4", apikey="x", format="json")
+    assert result == {"a": 1}
+
+
+def test_llm_format_json_plain():
+    import unittest.mock as mock
+    from peppermint.libs.ml import llm as _llm
+    fake_resp = mock.MagicMock()
+    fake_resp.choices[0].message.content = '{"b": 2}'
+    with mock.patch("peppermint.libs.ml._client_cache", {}):
+        with mock.patch("openai.OpenAI") as MockClient:
+            MockClient.return_value.chat.completions.create.return_value = fake_resp
+            result = _llm("test", source="openai", model="gpt-4", apikey="x", format="json")
+    assert result == {"b": 2}

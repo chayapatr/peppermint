@@ -4,7 +4,7 @@ Python functions receive plain list[dict], return plain list[dict].
 """
 from __future__ import annotations
 from ..bridge import ok, err, get_rows, pep_fn_lazy
-from ..stdlib.core import pep_signature
+from ..stdlib.core import pep_signature, _as_ctx
 
 
 def _to_df(data):
@@ -117,9 +117,12 @@ def kmeans(data, k=None, on=None, out=None, model=None, method="silhouette", sav
         if save_path is not None:
             _save_model(fitted, save_path)
 
+    from ..context import Context
     df = df.copy()
     df.loc[idx, out] = labels.astype(int)
-    return ok(_from_df(df))
+    ctx = _as_ctx(data) or Context(data=[])
+    final_k = best_k if isinstance(k, PmRange) else (int(k) if k is not None else None)
+    return ok(ctx.with_data(_from_df(df)).with_artifact("kmeans", {"model": fitted, "k": final_k}))
 
 
 @pep_fn_lazy
@@ -159,13 +162,19 @@ Prints R² and per-feature coefficients to stderr.
         if save_path is not None:
             _save_model(fitted, save_path)
 
+    from ..context import Context
     predicted = fitted.predict(X)
     df = df.copy()
     df.loc[X.index, out] = predicted
     if load_path is None:
         y = df.loc[X.index, on]
         df.loc[X.index, "residual"] = y.values - predicted
-    return ok(_from_df(df))
+    ctx = _as_ctx(data) or Context(data=[])
+    artifact = {"model": fitted}
+    if load_path is None:
+        artifact["r2"] = fitted.score(X, df.loc[X.index, on])
+        artifact["coefficients"] = dict(zip(num_cols, fitted.coef_))
+    return ok(ctx.with_data(_from_df(df)).with_artifact("ols", artifact))
 
 
 @pep_fn_lazy
@@ -221,6 +230,7 @@ def umap(data, dims=2, on=None, out=None, neighbors=15, min_dist=0.1, metric="eu
             if save_path is not None:
                 _save_model(reducer, save_path)
 
+    from ..context import Context
     df = df.copy()
     if isinstance(out, list):
         if len(out) != dims:
@@ -230,7 +240,8 @@ def umap(data, dims=2, on=None, out=None, neighbors=15, min_dist=0.1, metric="eu
     else:
         for i in range(dims):
             df.loc[idx, f"{out}_{i+1}"] = embedding[:, i]
-    return ok(_from_df(df))
+    ctx = _as_ctx(data) or Context(data=[])
+    return ok(ctx.with_data(_from_df(df)).with_artifact("umap", {"model": reducer}))
 
 
 _client_cache: dict = {}
@@ -273,15 +284,14 @@ Example: `add(embedding: ml.embed(it.text, source: "deepinfra", model: "...", ap
 
 
 @pep_fn_lazy
-@pep_signature("ml.llm(prompt: str, source: str, model: str, apikey?: str) -> str")
-def llm(prompt, source=None, model=None, apikey=None):
+@pep_signature("ml.llm(prompt: str, source: str, model: str, apikey?: str, format?: str) -> str | Any")
+def llm(prompt, source=None, model=None, apikey=None, format=None, **_):
     """Run a single LLM call. Use inside `add`.
 
 `source`: `"deepinfra"` or `"openai"`.
 `model`: model name (e.g. `"meta-llama/Llama-3.3-70B-Instruct"`).
 `apikey`: required for `"deepinfra"` and `"openai"`.
-
-Example: `add(label: ml.llm("Classify this post: " + it.title, source: "deepinfra", model: "...", apikey: env.get("KEY")), concurrent: 10, retry: 3)`"""
+`format`: `"json"` — strips markdown fences, parses response as JSON, raises on parse failure."""
     if source is None:
         raise ValueError("llm: source is required (e.g. source: \"deepinfra\" or source: \"openai\")")
     if model is None:
@@ -304,7 +314,14 @@ Example: `add(label: ml.llm("Classify this post: " + it.title, source: "deepinfr
             model=model,
             messages=[{"role": "user", "content": prompt}],
         )
-        return resp.choices[0].message.content
+        content = resp.choices[0].message.content
+
+        if format == "json":
+            import json, re
+            cleaned = re.sub(r"^```json\s*|^```\s*|```$", "", content.strip(), flags=re.MULTILINE).strip()
+            return json.loads(cleaned)
+
+        return content
     else:
         raise ValueError(f"llm: unknown source '{source}' (use 'deepinfra' or 'openai')")
 
