@@ -76,7 +76,11 @@ def run_file(args):
         sys.exit(1)
 
     env = build_global_env()
-    interp = Interpreter(env, quiet=args.quiet)
+    cache = None
+    if args.cache:
+        from .cache import Cache
+        cache = Cache(args.file)
+    interp = Interpreter(env, quiet=args.quiet, cache=cache)
 
     try:
         result = interp.run(program)
@@ -155,6 +159,7 @@ def main():
     ap = argparse.ArgumentParser(prog="pep", description="Peppermint language")
     ap.add_argument("file", nargs="?", help="Path to .pep file (omit to start REPL)")
     ap.add_argument("--quiet", action="store_true", help="Suppress pipe step summaries")
+    ap.add_argument("--cache", action="store_true", help="Enable step caching in .peppermint/cache/")
 
     args = ap.parse_args()
 

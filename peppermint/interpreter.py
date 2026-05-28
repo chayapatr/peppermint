@@ -105,9 +105,10 @@ class PepError(Exception):
 # --- Interpreter ---
 
 class Interpreter:
-    def __init__(self, global_env: Env, quiet: bool = False):
+    def __init__(self, global_env: Env, quiet: bool = False, cache=None):
         self.env = global_env
         self.quiet = quiet
+        self._cache = cache  # Cache instance or None
 
     def run(self, program: Program) -> Any:
         result = None
@@ -323,8 +324,30 @@ class Interpreter:
                 expr = step.expr
                 if isinstance(expr, (Ident, FieldAccess)):
                     expr = Call(func=expr, args=[], kwargs={}, block=None, loc=expr.loc)
+
+                # Cache check
+                ck = None
+                if self._cache:
+                    from .cache import cache_key_for_step
+                    step_src = self._call_name(step.expr)
+                    ck = cache_key_for_step(step_src, value)
+                    cached = self._cache.get_step(ck)
+                    if cached is not None:
+                        result = Ok(cached)
+                        after = cached
+                        from .context import Context as _Ctx
+                        after_list = after.data if isinstance(after, _Ctx) else (after if isinstance(after, list) else None)
+                        if show and after_list is not None:
+                            self._print_step(step.expr, before, after_list, depth=depth, cached=True)
+                        continue
+
                 step_result = self.eval_call(expr, value, env, depth=depth)
                 result = step_result if isinstance(step_result, (Ok, Err)) else Ok(step_result)
+
+                # Cache write
+                if ck and isinstance(result, Ok):
+                    self._cache.set_step(ck, result.value)
+
             except PepError as e:
                 step_name = self._call_name(step.expr)
                 result = Err(f"{step_name}: {e}", cause=e)
@@ -345,7 +368,7 @@ class Interpreter:
 
         return result
 
-    def _print_step(self, call_node, before: list | None, after: list, depth: int = 0):
+    def _print_step(self, call_node, before: list | None, after: list, depth: int = 0, cached: bool = False):
         import sys
         indent = "  " * depth
         name = self._call_name(call_node)
@@ -371,6 +394,8 @@ class Interpreter:
                 line += f"  \033[2m[{n} concurrent]\033[0m"
             except Exception:
                 pass
+        if cached:
+            line += f"  \033[2m[cached]\033[0m"
         print(line, file=sys.stderr)
 
     def _call_name(self, node) -> str:
@@ -432,10 +457,14 @@ class Interpreter:
                     return v.value if isinstance(v, Ok) else v
                 args = pre + [_unwrap_ok(self.eval(a, env)) for a in node.args]
                 kwargs = {k: _unwrap_ok(self.eval(v, env)) for k, v in node.kwargs.items()}
+            _VOLATILE = {"embed", "llm"}
+            fn_name = self._call_name(node.func).split(".")[-1]
+            extra = {}
             if _check_accepts_interp(fn):
-                result = fn(*args, **kwargs, _block=node.block, _env=env, _interp=self, _depth=depth)
-            else:
-                result = fn(*args, **kwargs)
+                extra = {"_block": node.block, "_env": env, "_interp": self, "_depth": depth}
+            if self._cache and fn_name in _VOLATILE:
+                extra["_row_cache"] = self._cache
+            result = fn(*args, **kwargs, **extra) if extra else fn(*args, **kwargs)
             # Unwrap nested Ok(Ok(...))
             while isinstance(result, Ok) and isinstance(result.value, Ok):
                 result = result.value
