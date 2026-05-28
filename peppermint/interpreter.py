@@ -141,6 +141,13 @@ class Interpreter:
             case ObjLit():              return self.eval_obj(node, env)
             case Spread(obj=o):         return self.eval(o, env)
             case Literal(value=v):              return v
+            case InterpolatedStr(parts=parts):
+                pieces = []
+                for p in parts:
+                    v = self.eval(p, env)
+                    if isinstance(v, Ok): v = v.value
+                    pieces.append("" if v is None else str(v))
+                return "".join(pieces)
             case PmFunction() | PmRange() | Ok() | Err():
                 return node  # already a runtime value, pass through
             case _ if not isinstance(node, type) and not hasattr(node, '__dataclass_fields__'):

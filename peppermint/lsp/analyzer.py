@@ -8,7 +8,7 @@ from pathlib import Path
 from peppermint.ast_nodes import (
     Program, Assign, UseDecl, NsDecl, Ident, FieldAccess,
     Call, Pipe, PipeStep, Lambda, Match, Block, Loc,
-    PatOk, PatErr,
+    PatOk, PatErr, InterpolatedStr,
 )
 
 
@@ -164,6 +164,9 @@ def _walk_refs(node, known: set, undefined: list):
             _walk_refs(s, block_known, undefined)
     elif isinstance(node, FieldAccess):
         _walk_refs(node.obj, known, undefined)
+    elif isinstance(node, InterpolatedStr):
+        for part in node.parts:
+            _walk_refs(part, known, undefined)
     elif hasattr(node, '__dataclass_fields__'):
         for fname in node.__dataclass_fields__:
             _walk_refs(getattr(node, fname), known, undefined)

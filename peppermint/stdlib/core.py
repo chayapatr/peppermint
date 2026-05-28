@@ -270,14 +270,19 @@ def reduce(data, init, fn, _interp=None, _env=None, **_) -> Any:
 
 
 @pep_signature("each(by: str, |> ...) -> List<Row>")
-def each(data, by=None, _block=None, _interp=None, _env=None, _depth=0, **kwargs):
+def each(data, *args, by=None, fn=None, _block=None, _interp=None, _env=None, _depth=0, **kwargs):
     """Run a sub-pipe for each group. Results are concatenated, or original table returned for side effects.
 Accepts a block `{ |> ... }` or a lambda `x -> x |> ...` as the sub-pipe."""
     from ..ast_nodes import Pipe, Literal
     from ..context import Context
 
-    # Lambda form: each(by: "col", x -> x |> ...)
-    fn_arg = kwargs.get("fn") or (list(kwargs.values())[0] if kwargs else None)
+    # Lambda form: each(by: "col", grp -> grp |> ...)
+    # The lambda arrives as a positional arg alongside by: kwarg
+    fn_arg = fn
+    for a in args:
+        if isinstance(a, PmFunction):
+            fn_arg = a
+            break
     if isinstance(fn_arg, PmFunction):
         _block = None  # use lambda path
 
@@ -349,7 +354,11 @@ def join(data, other, on=None, _interp=None, _env=None, **_) -> list:
 def print_(data, _interp=None, _env=None, **_):
     """Print a value and pass it through unchanged."""
     val = _eval_arg(data, _interp, _env)
-    print(val)
+    from ..context import Context
+    if isinstance(val, Context):
+        print(val.data)
+    else:
+        print(val)
     return val
 
 

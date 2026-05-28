@@ -33,6 +33,29 @@
         {
           "name": "constant.character.escape.pep",
           "match": "\\\\."
+        },
+        {
+          "name": "meta.interpolation.pep",
+          "begin": "\\{",
+          "end": "\\}",
+          "beginCaptures": {
+            "0": { "name": "punctuation.definition.interpolation.begin.pep" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.interpolation.end.pep" }
+          },
+          "patterns": [
+            { "include": "#comment" },
+            { "include": "#number" },
+            { "include": "#keyword" },
+            { "include": "#constant" },
+            { "include": "#operator" },
+            { "include": "#pipe" },
+            { "include": "#namespace" },
+            { "include": "#field-access" },
+            { "include": "#call" },
+            { "include": "#identifier" }
+          ]
         }
       ]
     },

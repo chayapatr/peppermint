@@ -522,6 +522,34 @@ def test_text_parse_dict():
     assert result == {"a": 1}
 
 
+# --- String interpolation ---
+
+def test_interpolation_simple():
+    assert val('x = 5\n"{x}"') == "5"
+
+def test_interpolation_expression():
+    assert val('x = 3\n"{x * 2} items"') == "6 items"
+
+def test_interpolation_multiple():
+    assert val('a = 1\nb = 2\n"{a} and {b}"') == "1 and 2"
+
+def test_interpolation_none():
+    assert val('x = none\n"{x}"') == ""
+
+def test_interpolation_in_add():
+    result = unwrap('[{ a: 1, b: "x" }, { a: 2, b: "y" }] |> add(label: "{it.a}_{it.b}")')
+    assert result[0]["label"] == "1_x"
+    assert result[1]["label"] == "2_y"
+
+def test_interpolation_nested_expr():
+    assert val('xs = [1, 2, 3]\n"len is {len(xs)}"') == "len is 3"
+
+def test_no_interpolation_in_json_string():
+    # {"a": 1} should not be treated as interpolation — falls back to literal
+    result = val('use text\ntext.parse("{\\"a\\": 1}")')
+    assert result == {"a": 1}
+
+
 # --- model shorthand resolves correctly ---
 
 def test_resolve_model_load():

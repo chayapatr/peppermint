@@ -487,7 +487,10 @@ class Parser:
             self._eat("STRING")
             raw = tok.value[1:-1]
             value = raw.encode("raw_unicode_escape").decode("unicode_escape")
-            return StrLit(value=value, loc=self._loc(tok))
+            loc = self._loc(tok)
+            if "{" in value:
+                return self._parse_interpolated(value, loc)
+            return StrLit(value=value, loc=loc)
 
         if tok.type == "TRUE":
             self._eat("TRUE")
@@ -677,6 +680,42 @@ class Parser:
             self._eat("NAME")
             return Ident(name=tok.value, loc=self._loc(tok))
         raise ParseError(f"expected pattern value, got {tok.type}", tok.line, tok.col)
+
+    def _parse_interpolated(self, value: str, loc):
+        """Parse a string containing {expr} interpolations into an InterpolatedStr node."""
+        from .ast_nodes import InterpolatedStr, StrLit
+        parts = []
+        i = 0
+        while i < len(value):
+            j = value.find("{", i)
+            if j == -1:
+                if i < len(value):
+                    parts.append(StrLit(value=value[i:], loc=loc))
+                break
+            if j > i:
+                parts.append(StrLit(value=value[i:j], loc=loc))
+            # Find matching closing brace (handle nesting)
+            depth = 1
+            k = j + 1
+            while k < len(value) and depth > 0:
+                if value[k] == "{":
+                    depth += 1
+                elif value[k] == "}":
+                    depth -= 1
+                k += 1
+            expr_src = value[j+1:k-1]
+            try:
+                expr_node = parse(expr_src + "\n").body[0]
+            except Exception:
+                # Not a valid expression — treat the whole string as a literal
+                return StrLit(value=value, loc=loc)
+            parts.append(expr_node)
+            i = k
+        if not parts:
+            return StrLit(value="", loc=loc)
+        if len(parts) == 1 and isinstance(parts[0], StrLit):
+            return parts[0]
+        return InterpolatedStr(parts=parts, loc=loc)
 
 
 class _ContPipe:

@@ -202,6 +202,12 @@ class NsDecl:
     loc: Loc = field(default_factory=lambda: NO_LOC)
 
 @dataclass
+class InterpolatedStr:
+    parts: list    # alternating StrLit and Expr nodes
+    loc: Loc = field(default_factory=lambda: NO_LOC)
+
+
+@dataclass
 class Program:
     body: list     # list[Assign | UseDecl | NsDecl | Expr]
     loc: Loc = field(default_factory=lambda: NO_LOC)
