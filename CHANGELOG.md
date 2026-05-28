@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.4.0 — 2026-05-28
+
+### Language (breaking)
+
+- `add(field: expr, concurrent: N)` and `add(field: expr, retry: N)` kwargs removed — use `@concurrent(N)` and `@retry(N)` annotations instead
+- `map(expr, concurrent: N)` and `mapi(expr, concurrent: N)` kwargs removed — use `@concurrent(N)` annotation
+
+### Language
+
+- **String interpolation** — `"{it.title} in {it.cluster}"` — any expression inside `{}` is evaluated in the current scope; `it` works inside pipe steps
+- **`env.KEY`** — bare field access on `env` reads environment variables directly; `env.OPENAI_API_KEY` preferred over `env.get("OPENAI_API_KEY")`
+- **`table[key]`** — keyed row lookup: `stats[it.cluster]` returns the first row where the first column equals the key; returns `none` if not found. Use inside `add` for cross-table enrichment without `join`
+- **`@concurrent(n)`** — annotation on any pipe step or declaration; runs the step over each row in a thread pool with n workers. Replaces `concurrent:` kwarg
+- **`@retry(n)`** — annotation; retries the step on exception up to n times
+- **`@until(cond, max: n)`** — annotation on a step or `( )` block; retries rows where condition is false up to max rounds; failures go to `.errors`
+- **`each` lambda form** — `|> each(by: "col", grp -> grp |> ...)` equivalent to block form
+
+### Runtime
+
+- **Context** — every table pipe now produces a `Context` carrying `.data`, `.errors`, and `.artifacts`. Access via dotted field: `posts.data`, `posts.errors`, `posts.kmeans`, `posts.umap`, `posts.viz`
+- **`--cache` flag** — pass `pep file.pep --cache` to enable step caching. Results stored in `.peppermint/cache/` next to the file; unchanged steps are skipped on rerun
+- **Row-level cache** — `ml.embed` and `ml.llm` cache per-row results in `.peppermint/row_cache/`; only new rows hit the API on rerun
+
+### Standard library
+
+- **`recover(field: expr)`** — move error rows back into data with a fallback value or expression; use after a step that may fail
+- **`ml.llm(format: "json")`** — strips markdown fences, parses response as JSON, raises on parse failure
+- **`ml.kmeans`** — writes `{ model, k }` to `ctx.artifacts["kmeans"]`
+- **`ml.umap`** — writes `{ model }` to `ctx.artifacts["umap"]`
+- **`ml.ols`** — writes `{ model, r2, coefficients }` to `ctx.artifacts["ols"]`
+- **`viz.scatter`, `viz.line`, `viz.histogram`, `viz.heatmap`** — write `{ plot }` to `ctx.artifacts["viz"]`
+
+### LSP / VSCode
+
+- String interpolation `{expr}` highlighted inside strings — `{` and `}` delimiters colored distinctly; full syntax highlighting inside expressions
+- Annotation names (`concurrent`, `retry`, `until`, `stable`) no longer flagged as undefined references
+- `InterpolatedStr` nodes walked for undefined reference checking
+
+---
+
 ## 0.3.4 — 2026-05-27
 
 ### Interpreter (breaking fix)

@@ -4,36 +4,88 @@
 
 | Function | Description |
 |---|---|
-| `load(path)` | Load CSV or JSON as list of rows |
-| `save(path)` | Write list to CSV or JSON file |
-| `filter(pred)` | Keep elements matching condition |
-| `map(expr, concurrent?)` | Transform every element |
-| `mapi(expr, concurrent?)` | Map with index — `it` is `{ idx, val }` |
+| `load(path)` | Load CSV or JSON as a Context |
+| `save(data, path)` | Write rows to CSV or JSON |
+| `filter(pred)` | Keep rows matching condition — `it` is current row |
+| `map(expr)` | Transform every element — `it` is current element |
+| `mapi(expr)` | Map with index — `it` is `{ idx, val }` |
 | `reduce(init, fn)` | Fold list into a single value |
-| `add(field: expr, concurrent?)` | Add a new field to every row |
+| `add(field: expr)` | Add a new field to every row |
 | `drop(field)` | Remove a field |
 | `select(fields...)` | Keep only specified fields |
 | `rename(old: new)` | Rename a field |
-| `sort(by, dir)` | Sort rows |
+| `sort(by, dir?)` | Sort rows — `dir:` `"asc"` (default) or `"desc"` |
 | `take(n)` | Keep first n rows |
-| `join(other, on)` | Inner join on a shared key field |
-| `each(by:, \|> ...)` | Run a sub-pipe per group, concatenate results |
-| `collapse(by:, ...)` | Aggregate rows, optionally grouped. Values can be agg fns (`mean`, `count`, etc.) or a lambda receiving the group as a list |
-| `sum(col.field)` | Sum of a column — use in `collapse` or `add`. Handles vector (list) columns element-wise |
-| `mean(col.field)` | Mean of a column — use in `collapse` or `add`. Handles vector (list) columns element-wise |
+| `unique(by?)` | Deduplicate rows — `by:` deduplicates on a single field |
+| `each(by:, \|> ...)` | Run a sub-pipe per group, concatenate results. Accepts block or lambda form |
+| `collapse(by:, ...)` | Aggregate rows, optionally grouped. Values can be agg fns or a lambda receiving the group |
+| `join(other, on)` | Inner join on a shared key — prefer `table[key]` for single-field enrichment |
+| `recover(field: expr)` | Move error rows back into data with a fallback value — use after a step that may fail |
+| `sum(col.field)` | Sum — use in `collapse` or `add`. Handles vector columns element-wise |
+| `mean(col.field)` | Mean — use in `collapse` or `add`. Handles vector columns element-wise |
 | `count()` | Row count — use in `collapse` |
-| `min(col.field)` | Minimum — use in `collapse` or `add`. Handles vector (list) columns element-wise |
-| `max(col.field)` | Maximum — use in `collapse` or `add`. Handles vector (list) columns element-wise |
-| `rank(col.field, by:, dir:)` | Rank rows by a column — use in `add` |
-| `rolling(col.field, window, fn, by:)` | Rolling window — use in `add` |
+| `min(col.field)` | Minimum — use in `collapse` or `add` |
+| `max(col.field)` | Maximum — use in `collapse` or `add` |
+| `rank(col.field, by?, dir?)` | Rank rows by a column — use in `add` |
+| `rolling(col.field, window, fn, by?)` | Rolling window aggregation — use in `add` |
 | `len(list)` | Number of elements |
 | `concat(a, b, ...)` | Concatenate lists |
+| `slice(list, start, end)` | Slice a list (inclusive end) |
+| `get(list, i)` | Get element at index. On tables, `table[key]` returns first row where first column equals key |
 | `print(value)` | Print and pass through |
 | `str(value)` | Convert to string |
 | `int(value)` | Convert to integer |
 | `float(value)` | Convert to float |
 
-`concurrent: N` runs the expression in a thread pool with N workers. Useful for I/O-bound expressions like `ml.embed`.
+### Annotations
+
+Use annotations instead of kwargs for execution behavior:
+
+| Annotation | Description |
+|---|---|
+| `@concurrent(n)` | Run the step over each row using n threads. Works on any step or declaration |
+| `@retry(n)` | Retry the step up to n times on exception |
+| `@until(cond, max: n)` | Retry step or `( )` block on rows where condition is false, up to max rounds. Rows still failing go to `.errors` |
+
+```
+# On a step
+|> add(embedding: ml.embed(...))
+    @concurrent(50)
+
+# Combined
+|> add(label: ml.llm(...))
+    @retry(3)
+    @until(it.label != none, max: 5)
+
+# On a declaration — applies every time it's used
+gpt = ml.llm("classify: {it.title}", source: "openai", model: "gpt-4o", apikey: env.OPENAI_API_KEY)
+  @concurrent(10)
+  @retry(3)
+```
+
+### `recover`
+
+```
+|> add(label: ml.llm(...))
+|> recover(label: "unknown")         # literal fallback
+|> recover(label: it.title)          # expression fallback
+```
+
+Moves all rows currently in `.errors` back into `.data`, applying the fallback expression per row. Clears `.errors` after recovery.
+
+### Context fields
+
+After a pipe, the result is a Context. Access fields by dotting into the named assignment:
+
+```
+posts = load("data.csv") |> ml.kmeans(k: 3, out: "cluster")
+
+posts.data      # the rows
+posts.errors    # rows that failed any step
+posts.kmeans    # { model, k } — written by ml.kmeans
+posts.umap      # { model } — written by ml.umap
+posts.viz       # { plot } — written by viz.*
+```
 
 ---
 
@@ -41,7 +93,14 @@
 
 | Function | Description |
 |---|---|
-| `env.get("KEY")` | Read environment variable — returns value or `Err` |
+| `env.KEY` | Read environment variable — errors if not set (preferred) |
+| `env.get("KEY")` | Read environment variable — returns `Err` if not set |
+
+```
+use env
+key = env.OPENAI_API_KEY
+val = env.get("OPTIONAL_KEY")
+```
 
 ---
 
@@ -72,13 +131,17 @@
 
 | Function | Description |
 |---|---|
-| `ml.embed(text, source:, model:, apikey?)` | Embed a single string — use inside `add` with `concurrent: N, retry: N` for batch API calls |
-| `ml.llm(prompt, source:, model:, apikey?)` | Single LLM call — use inside `add`. Returns a string |
-| `ml.kmeans(k:, on:, out:, model?)` | K-means clustering; `k:` accepts a range for auto-select by silhouette score; `model:` loads if file exists, else fits and saves |
-| `ml.umap(dims:, on:, out:, neighbors?, min_dist?, metric?, model?)` | Dimensionality reduction — `neighbors` (default 15), `min_dist` (default 0.1), `metric` (default "euclidean"); `model:` caches fit |
-| `ml.ols(on:, out:, model?)` | OLS regression — adds predicted and residual columns; prints R² to stderr |
+| `ml.embed(text, source:, model:, apikey?)` | Embed a single string — use inside `add` with `@concurrent(N)` for batch calls |
+| `ml.llm(prompt, source:, model:, apikey?, format?)` | Single LLM call — use inside `add`. `format: "json"` strips fences and parses response |
+| `ml.kmeans(k:, on:, out:, method?, model?)` | K-means — `k:` accepts a range for auto-select; `method:` `"silhouette"` (default) or `"elbow"`; writes `.kmeans` artifact |
+| `ml.umap(dims:, on:, out:, neighbors?, min_dist?, metric?, model?)` | Dimensionality reduction — writes `.umap` artifact |
+| `ml.ols(on:, out:, model?)` | OLS regression — adds predicted and residual columns; writes `.ols` artifact |
 | `ml.dist(a, b, metric?)` | Distance between two vectors — use inside `add`; `metric:` `"cosine"` (default) or `"euclidean"` |
 | `ml.silhouette(on:)` | Score current clustering — prints silhouette score to stderr |
+
+`model:` shorthand on `kmeans`/`umap`/`ols`: loads from file if it exists, otherwise fits and saves.
+
+`ml.embed` and `ml.llm` use row-level caching when `--cache` is enabled — only new rows hit the API on rerun.
 
 ---
 
@@ -86,10 +149,13 @@
 
 `pip install peppermint-lang[viz]`
 
+All viz functions write a `.viz.plot` artifact to the Context and open the plot immediately. Pass `file:` to also save to disk.
+
 | Function | Description |
 |---|---|
-| `viz.scatter(x:, y:, color?, size?, file?, display?)` | Scatter plot — `size: [w, h]` sets figure size; `file: "path.png"` saves image; `display: { label: "col", legend, axes, title: "...", dotsize: N \| "col" }` |
-| `viz.histogram(col:, file?)` | Histogram — `file:` saves image |
+| `viz.scatter(x:, y:, color?, size?, file?, display?)` | Scatter plot — `display: { label: "col", legend, axes, title: "...", dotsize: N \| "col" }` |
+| `viz.line(x:, y:, color?, size?, file?, display?)` | Line chart — `display: { legend, axes, title: "...", dotsize: N }` |
+| `viz.histogram(col:, file?)` | Histogram |
 | `viz.heatmap(file?)` | Correlation heatmap of all numeric columns |
 | `viz.plot(file?)` | Auto-plot based on data shape |
 | `viz.grid(..., file?)` | Multiple plots side by side |
@@ -118,7 +184,7 @@
 
 ## Writing Python libs
 
-Plain Python files work out of the box — just import them and Peppermint wraps the public functions automatically. For more control, use the `peppermint.bridge` decorators.
+Plain Python files work out of the box — Peppermint wraps public functions automatically. For more control, use `peppermint.bridge` decorators.
 
 ### Simple case — no decorators needed
 
@@ -134,11 +200,9 @@ use "./mylib.py" as mylib
 load("data.csv") |> mylib.normalize() |> print()
 ```
 
-Functions receive plain Python values (`list[dict]`, `str`, `int`, etc.) and return plain Python. Exceptions become `Err` automatically.
+Functions receive plain Python values (`list[dict]`, `str`, `int`, etc.). Exceptions become `Err` automatically.
 
 ### Using decorators
-
-Decorators give you hover tooltips in the LSP and handle lazy kwargs (expressions that haven't been evaluated yet when the function is called, like ranges or `env.get(...)`).
 
 ```python
 from peppermint.bridge import pep_fn
@@ -154,20 +218,12 @@ def build_mylib_env():
     return {"top": top}
 ```
 
-`build_mylib_env()` is optional but required if you want Peppermint to discover the lib via `use mylib` (without a path). For path-based imports (`use "./mylib.py"`), it's not needed.
-
-### How `@pep_fn` works
-
-When a Peppermint expression like `mylib.top(data, n: 2..8)` is called, the `n` argument may arrive as an unevaluated AST node — the interpreter hasn't resolved the range yet. `@pep_fn` checks each kwarg: if it's a plain value (`str`, `int`, `bool`, `list`), it passes through unchanged; if it looks like an AST node, it calls `_interp.eval()` to resolve it first. Your function body always receives plain Python.
-
-Without `@pep_fn`, plain imports still work — but any unevaluated expression passed as a kwarg would arrive as an internal AST object rather than its resolved value.
-
 ### Decorators
 
 | Decorator | Behavior |
 |---|---|
-| `@pep_fn` | **Default.** Auto-evaluates unevaluated kwargs before calling the function. Exceptions become `Err`. |
-| `@pep_fn_lazy` | Alias for `@pep_fn`. Use to signal explicitly that kwargs may be expressions. |
-| `@pep_fn_static` | No evaluation step — args pass straight through. Use when all args are guaranteed plain literals. |
+| `@pep_fn` | **Default.** Auto-evaluates unevaluated kwargs. Exceptions become `Err`. |
+| `@pep_fn_lazy` | Alias for `@pep_fn`. |
+| `@pep_fn_static` | No evaluation step — args pass straight through. |
 
-`@pep_signature("lib.fn(args) -> ReturnType")` attaches the signature string shown in LSP hover tooltips.
+`@pep_signature("lib.fn(args) -> ReturnType")` attaches the signature shown in LSP hover tooltips.

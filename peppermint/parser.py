@@ -341,12 +341,14 @@ class Parser:
         return node
 
     def _parse_annotations(self) -> list:
-        """Parse zero or more @name or @name(args) annotations on the next lines."""
+        """Parse zero or more @name or @name(args) annotations on the same or next line."""
         annotations = []
         while True:
-            # Annotations may appear on the same line or indented on the next line
+            # Peek past newlines to check for @ without consuming if not found
+            saved = self._pos
             self._skip_nl()
             if not self._at("AT"):
+                self._pos = saved  # restore — no annotation found
                 break
             self._eat("AT")
             name = self._eat("NAME").value

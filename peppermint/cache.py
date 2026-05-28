@@ -85,8 +85,11 @@ class _Store:
 class Cache:
     """Value cache + row-level cache, rooted at a .peppermint/ directory."""
 
-    def __init__(self, pep_file_path: str):
-        root = Path(pep_file_path).parent / ".peppermint"
+    def __init__(self, pep_file_path: str, cache_dir: str | None = None):
+        if cache_dir:
+            root = Path(cache_dir)
+        else:
+            root = Path(pep_file_path).parent / ".peppermint"
         self._steps = _Store(root / "cache")
         self._rows  = _Store(root / "row_cache")
 

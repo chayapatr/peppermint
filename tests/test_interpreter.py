@@ -613,7 +613,7 @@ data.errors
 
 
 def test_llm_format_json_strips_fences():
-    import json, unittest.mock as mock
+    import unittest.mock as mock
     from peppermint.libs.ml import llm as _llm
     fake_resp = mock.MagicMock()
     fake_resp.choices[0].message.content = '```json\n{"a": 1}\n```'
@@ -755,6 +755,32 @@ data |> add(label: stats[it.cluster].label)
 
 def test_list_index_still_works():
     assert val('[10, 20, 30][1]') == 20
+
+
+# --- multi add / drop ---
+
+def test_multi_add():
+    result = unwrap('[{ a: 1, b: 2 }] |> add(x: it.a + 1, y: it.b * 3)')
+    assert result[0]["x"] == 2
+    assert result[0]["y"] == 6
+
+def test_multi_add_independent_eval():
+    # x and y are evaluated against the original row, not each other
+    result = unwrap('[{ a: 1 }] |> add(x: it.a + 1, y: it.a + 10)')
+    assert result[0]["x"] == 2
+    assert result[0]["y"] == 11
+
+def test_single_add_still_works():
+    result = unwrap('[{ a: 1 }] |> add(x: it.a * 2)')
+    assert result[0]["x"] == 2
+
+def test_multi_drop():
+    result = unwrap('[{ a: 1, b: 2, c: 3 }] |> drop("a", "c")')
+    assert result[0] == {"b": 2}
+
+def test_single_drop_still_works():
+    result = unwrap('[{ a: 1, b: 2 }] |> drop("a")')
+    assert result[0] == {"b": 2}
 
 
 # --- recover ---

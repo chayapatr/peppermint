@@ -59,12 +59,41 @@ def _repl_display(value):
     print(f"\033[2m{val_str}\033[0m{' ' * pad}{type_tag}")
 
 
+def _parse_frontmatter(src: str) -> tuple[dict, str]:
+    """Extract YAML frontmatter from a .pep file.
+    Returns (config_dict, remaining_source). If no frontmatter, returns ({}, src)."""
+    if not src.startswith("---"):
+        return {}, src
+    end = src.find("\n---", 3)
+    if end == -1:
+        return {}, src
+    yaml_src = src[3:end].strip()
+    rest = src[end + 4:].lstrip("\n")
+    config = {}
+    for line in yaml_src.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" in line:
+            k, v = line.split(":", 1)
+            k, v = k.strip(), v.strip()
+            if v.lower() == "true":
+                config[k] = True
+            elif v.lower() == "false":
+                config[k] = False
+            else:
+                config[k] = v.strip('"').strip("'")
+    return config, rest
+
+
 def run_file(args):
     try:
         src = open(args.file).read()
     except FileNotFoundError:
         print(f"\033[1;31mError:\033[0m × file not found: {args.file}", file=sys.stderr)
         sys.exit(1)
+
+    config, src = _parse_frontmatter(src)
 
     try:
         program = parse(src)
@@ -76,11 +105,17 @@ def run_file(args):
         sys.exit(1)
 
     env = build_global_env()
+
+    # CLI flags take precedence over frontmatter
+    use_cache = args.cache or config.get("cache", False)
+    cache_dir = config.get("cache_dir", None)
+    quiet = args.quiet or config.get("quiet", False)
+
     cache = None
-    if args.cache:
+    if use_cache:
         from .cache import Cache
-        cache = Cache(args.file)
-    interp = Interpreter(env, quiet=args.quiet, cache=cache)
+        cache = Cache(args.file, cache_dir=cache_dir)
+    interp = Interpreter(env, quiet=quiet, cache=cache)
 
     try:
         result = interp.run(program)

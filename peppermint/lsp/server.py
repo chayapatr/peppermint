@@ -27,16 +27,30 @@ server = LanguageServer(
 _docs: dict[str, AnalysisResult] = {}
 
 
+def _strip_frontmatter(text: str) -> tuple[str, int]:
+    """Remove YAML frontmatter block. Returns (stripped_text, line_offset)."""
+    if not text.startswith("---"):
+        return text, 0
+    end = text.find("\n---", 3)
+    if end == -1:
+        return text, 0
+    front = text[:end + 4]
+    rest = text[end + 4:].lstrip("\n")
+    offset = front.count("\n") + (len(text[end + 4:]) - len(rest))
+    return rest, offset
+
+
 def _parse_and_analyze(uri: str, text: str):
     diagnostics = []
+    src, line_offset = _strip_frontmatter(text)
     try:
-        program = parse(text)
+        program = parse(src)
         result = analyze(program)
         _docs[uri] = result
 
         for name, loc in result.undefined_refs:
-            start = Position(line=loc.line - 1, character=loc.col - 1)
-            end = Position(line=loc.line - 1, character=loc.col - 1 + len(name))
+            start = Position(line=loc.line - 1 + line_offset, character=loc.col - 1)
+            end = Position(line=loc.line - 1 + line_offset, character=loc.col - 1 + len(name))
             diagnostics.append(Diagnostic(
                 range=Range(start=start, end=end),
                 message=f"Undefined name: {name}",
@@ -44,7 +58,7 @@ def _parse_and_analyze(uri: str, text: str):
             ))
 
     except ParseError as e:
-        line = max(0, e.line - 1)
+        line = max(0, e.line - 1 + line_offset)
         col = max(0, e.col - 1)
         start = Position(line=line, character=col)
         end = Position(line=line, character=col + 1)

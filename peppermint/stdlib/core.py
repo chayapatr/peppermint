@@ -84,9 +84,11 @@ def load(path, _interp=None, _env=None, **_) -> Ok | Err:
 
 @pep_signature("save(path: str) -> Ok<Context> | Err")
 def save(data, path, _interp=None, _env=None, **_) -> Ok | Err:
-    """Write a list of rows to a CSV or JSON file."""
+    """Write a list of rows to a CSV or JSON file. Creates directories if they don't exist."""
     try:
+        import os
         path = _eval_arg(path, _interp, _env)
+        os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
         rows = _to_list(data)
         df = pd.DataFrame(rows)
         if path.endswith(".json"):
@@ -127,41 +129,46 @@ def mapi(data, transform, _interp=None, _env=None, **_) -> list:
     return [_unwrap(fn(item)) for item in indexed]
 
 
-@pep_signature("add(field: Expr) -> List<Row>")
+@pep_signature("add(field: Expr, ...) -> List<Row>")
 def add(data, _interp=None, _env=None, **kwargs) -> list:
-    """Add a new field to every row. Use `it.field` or `col.field` expressions. Use `@concurrent(N)` and `@retry(N)` annotations for parallel/retry execution."""
+    """Add one or more fields to every row. Use `it.field` or `col.field` expressions.
+Multiple fields are evaluated independently against the original row — field B cannot reference field A from the same `add` call.
+Use `@concurrent(N)` and `@retry(N)` annotations for parallel/retry execution."""
     import sys
 
     non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth")}
-    if len(non_meta) != 1:
-        raise ValueError("add() requires exactly one keyword argument: the new field name")
-    field, expr = next(iter(non_meta.items()))
+    if not non_meta:
+        raise ValueError("add() requires at least one keyword argument: the new field name(s)")
 
     ctx = _as_ctx(data)
     rows = ctx.data if ctx is not None else _to_list(data)
 
-    # Evaluate the expression to check if it's a column-level operation
-    val = _unwrap(_eval_arg(expr, _interp, _env))
-    if hasattr(val, "broadcast"):
-        df = pd.DataFrame(rows)
-        series = val.broadcast(df)
-        out = df.copy()
-        out[field] = series.values
-        result = out.to_dict(orient="records")
-        return ctx.with_data(result) if ctx is not None else result
+    # Apply each field in order, accumulating onto rows
+    # Each field is evaluated against the *original* row (before this add call),
+    # so fields within the same add() cannot reference each other
+    for field, expr in non_meta.items():
+        # Check if it's a column-level broadcast operation
+        val = _unwrap(_eval_arg(expr, _interp, _env))
+        if hasattr(val, "broadcast"):
+            df = pd.DataFrame(rows)
+            series = val.broadcast(df)
+            out = df.copy()
+            out[field] = series.values
+            rows = out.to_dict(orient="records")
+            continue
 
-    fn = _interp.make_row_fn(expr, _env)
+        fn = _interp.make_row_fn(expr, _env)
 
-    def _run(row):
-        try:
-            return _unwrap(fn(row))
-        except Exception as e:
-            print(f"add({field}): {e}", file=sys.stderr)
-            return None
+        def _run(row, _field=field, _fn=fn):
+            try:
+                return _unwrap(_fn(row))
+            except Exception as e:
+                print(f"add({_field}): {e}", file=sys.stderr)
+                return None
 
-    values = [_run(row) for row in rows]
-    result = [{**row, field: v} for row, v in zip(rows, values)]
-    return ctx.with_data(result) if ctx is not None else result
+        rows = [{**row, field: _run(row)} for row in rows]
+
+    return ctx.with_data(rows) if ctx is not None else rows
 
 
 @pep_signature("take(n: Int) -> List<Row>")
@@ -174,23 +181,35 @@ def take(data, n, _interp=None, _env=None, **_) -> list:
     return _to_list(data)[:n]
 
 
-@pep_signature("drop(field: str) -> List<Row>")
-def drop(data, field, _interp=None, _env=None, **_) -> list:
-    """Remove a field from every row."""
-    field = _eval_arg(field, _interp, _env)
+@pep_signature("drop(field: str, ...) -> List<Row>")
+def drop(data, *fields, _interp=None, _env=None, **_) -> list:
+    """Remove one or more fields from every row."""
+    fields = {_eval_arg(f, _interp, _env) for f in fields}
     ctx = _as_ctx(data)
     rows = ctx.data if ctx is not None else _to_list(data)
-    result = [{k: v for k, v in row.items() if k != field} for row in rows]
+    result = [{k: v for k, v in row.items() if k not in fields} for row in rows]
     return ctx.with_data(result) if ctx is not None else result
 
 
-@pep_signature("select(fields: str...) -> List<Row>")
-def select(data, *fields, _interp=None, _env=None, **_) -> list:
-    """Keep only the specified fields."""
+@pep_signature("select(fields: str..., renamed?: Expr) -> List<Row>")
+def select(data, *fields, _interp=None, _env=None, **kwargs) -> list:
+    """Keep only the specified fields. Keyword args compute or rename: `select("a", b: it.x + 1)`."""
     fields = [_eval_arg(f, _interp, _env) for f in fields]
+    non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth")}
     ctx = _as_ctx(data)
     rows = ctx.data if ctx is not None else _to_list(data)
-    result = [{f: row[f] for f in fields if f in row} for row in rows]
+
+    result = []
+    for row in rows:
+        new_row = {f: row[f] for f in fields if f in row}
+        for field, expr in non_meta.items():
+            fn = _interp.make_row_fn(expr, _env)
+            try:
+                new_row[field] = _unwrap(fn(row))
+            except Exception:
+                new_row[field] = None
+        result.append(new_row)
+
     return ctx.with_data(result) if ctx is not None else result
 
 
