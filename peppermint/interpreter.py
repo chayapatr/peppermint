@@ -234,6 +234,8 @@ class Interpreter:
             return ColRef(node.field)
         if isinstance(obj, dict):
             if node.field not in obj:
+                if hasattr(obj, '__missing__'):
+                    return obj.__missing__(node.field)
                 available = ", ".join(obj.keys())
                 raise PepError(f"field '{node.field}' does not exist. available: {available}", loc=node.loc, span=len(node.field))
             return obj[node.field]

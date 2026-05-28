@@ -634,3 +634,30 @@ def test_llm_format_json_plain():
             MockClient.return_value.chat.completions.create.return_value = fake_resp
             result = _llm("test", source="openai", model="gpt-4", apikey="x", format="json")
     assert result == {"b": 2}
+
+
+# --- env.KEY ---
+
+def test_env_key_access(monkeypatch):
+    monkeypatch.setenv("TEST_PEP_KEY", "hello")
+    result = val('use env\nenv.TEST_PEP_KEY')
+    assert result == "hello"
+
+
+def test_env_key_missing_returns_err(monkeypatch):
+    monkeypatch.delenv("NONEXISTENT_PEP_KEY_XYZ", raising=False)
+    result = val('use env\nenv.NONEXISTENT_PEP_KEY_XYZ')
+    from peppermint.interpreter import Err
+    assert isinstance(result, Err)
+
+
+def test_env_get_still_works(monkeypatch):
+    monkeypatch.setenv("TEST_PEP_KEY2", "world")
+    result = val('use env\nenv.get("TEST_PEP_KEY2")')
+    assert result == "world"
+
+
+def test_env_key_in_interpolation(monkeypatch):
+    monkeypatch.setenv("MY_NAME", "peppermint")
+    result = val('use env\n"hello {env.MY_NAME}"')
+    assert result == "hello peppermint"
