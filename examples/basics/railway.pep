@@ -32,9 +32,7 @@ match(risky,
 
 # Sub-pipe errors propagate to the outer pipe
 grouped = load("examples/people.csv")
-  |> group(by: "region") {
-      |> agg(avg: mean(it.income), n: count())
-  }
+  |> collapse(by: "region", avg: mean(col.income), n: count())
 
 match(grouped,
   Ok(data): data |> print(),

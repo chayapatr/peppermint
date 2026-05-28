@@ -115,6 +115,7 @@ class Pipe:
 class PipeStep:
     expr: Any      # Call
     quiet: bool
+    annotations: list = field(default_factory=list)  # list of {"name": str, "args": list}
     loc: Loc = field(default_factory=lambda: NO_LOC)
 
 @dataclass
@@ -187,6 +188,7 @@ class Literal:
 class Assign:
     name: str
     value: Any     # Expr
+    annotations: list = field(default_factory=list)  # list of {"name": str, "args": list}
     loc: Loc = field(default_factory=lambda: NO_LOC)
 
 @dataclass

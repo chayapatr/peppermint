@@ -162,6 +162,11 @@ class Interpreter:
         # Flatten nested Ok(Ok(...)) but preserve a single Ok/Err wrapper
         while isinstance(value, Ok) and isinstance(value.value, Ok):
             value = value.value
+        # Attach declaration-level annotations to the value for use in pipes
+        if node.annotations:
+            inner = value.value if isinstance(value, Ok) else value
+            if hasattr(inner, '__dict__') or isinstance(inner, PmFunction):
+                inner._annotations = node.annotations
         env.set(node.name, value)
         if isinstance(value, PmFunction):
             value.closure.set(node.name, value)
@@ -350,7 +355,7 @@ class Interpreter:
                             self._print_step(step.expr, before, after_list, depth=depth, cached=True)
                         continue
 
-                step_result = self.eval_call(expr, value, env, depth=depth)
+                step_result = self._eval_step_with_annotations(expr, value, env, depth, step.annotations)
                 result = step_result if isinstance(step_result, (Ok, Err)) else Ok(step_result)
 
                 # Cache write
@@ -406,6 +411,112 @@ class Interpreter:
         if cached:
             line += f"  \033[2m[cached]\033[0m"
         print(line, file=sys.stderr)
+
+    def _resolve_annotation_arg(self, arg, env):
+        """Evaluate an annotation argument -- plain int/str or an AST node."""
+        if isinstance(arg, dict) and "key" in arg:
+            return arg["key"], self.eval(arg["value"], env)
+        if isinstance(arg, (int, float, str, bool)):
+            return arg
+        return self.eval(arg, env)
+
+    def _eval_step_with_annotations(self, expr, value, env, depth, annotations):
+        """Execute a pipe step, applying @concurrent, @retry, @until annotations."""
+        from .context import Context
+
+        # Extract annotation values
+        concurrent_n = None
+        retry_n = 0
+        until_cond = None
+        until_max = 5
+
+        for ann in annotations:
+            name = ann["name"]
+            args = ann["args"]
+            if name == "concurrent" and args:
+                concurrent_n = int(self._resolve_annotation_arg(args[0], env))
+            elif name == "retry" and args:
+                retry_n = int(self._resolve_annotation_arg(args[0], env))
+            elif name == "until":
+                for a in args:
+                    if isinstance(a, dict) and a.get("key") == "max":
+                        until_max = int(self.eval(a["value"], env))
+                    elif not isinstance(a, dict):
+                        until_cond = a
+
+        def _run_once(input_value):
+            return self.eval_call(expr, input_value, env, depth=depth)
+
+        def _run_with_retry(input_value):
+            last_err = None
+            for attempt in range(retry_n + 1):
+                try:
+                    r = _run_once(input_value)
+                    if not isinstance(r, Err):
+                        return r
+                    last_err = r
+                except Exception as e:
+                    last_err = Err(str(e))
+            return last_err
+
+        run_fn = _run_with_retry if retry_n else _run_once
+
+        # @concurrent: run step row-by-row in a thread pool
+        if concurrent_n and isinstance(value, Context):
+            from concurrent.futures import ThreadPoolExecutor
+            rows = value.data
+            def _run_row(row):
+                row_ctx = Context(data=[row], artifacts=value.artifacts, errors=[])
+                r = run_fn(row_ctx)
+                rv = r.value if isinstance(r, Ok) else None
+                if isinstance(rv, Context):
+                    return rv.data, rv.errors
+                return [row], [{"_error": str(r), "_step": self._call_name(expr)}] if isinstance(r, Err) else ([row], [])
+            with ThreadPoolExecutor(max_workers=concurrent_n) as pool:
+                parts = list(pool.map(_run_row, rows))
+            merged_data = []
+            merged_errors = list(value.errors)
+            for data_part, err_part in parts:
+                merged_data.extend(data_part)
+                merged_errors.extend(err_part)
+            result = Ok(Context(data=merged_data, artifacts=value.artifacts, errors=merged_errors))
+        else:
+            result = run_fn(value)
+
+        # @until: retry rows that don't satisfy the condition
+        if until_cond is not None and isinstance(result, Ok):
+            ctx = result.value if isinstance(result.value, Context) else Context(data=result.value if isinstance(result.value, list) else [])
+            passing = []
+            pending = list(ctx.data)
+            errors = list(ctx.errors)
+            for attempt in range(until_max):
+                if not pending:
+                    break
+                new_passing = []
+                new_pending = []
+                for row in pending:
+                    try:
+                        passes = self.eval(until_cond, env.extend({"it": row}))
+                        if isinstance(passes, Ok): passes = passes.value
+                    except Exception:
+                        passes = False
+                    if passes:
+                        new_passing.append(row)
+                    else:
+                        new_pending.append({**row, "_attempts": row.get("_attempts", 0) + 1})
+                passing.extend(new_passing)
+                if new_pending:
+                    retry_ctx = Context(data=new_pending, artifacts=ctx.artifacts, errors=[])
+                    retry_result = run_fn(retry_ctx)
+                    rv = retry_result.value if isinstance(retry_result, Ok) else None
+                    pending = rv.data if isinstance(rv, Context) else (rv if isinstance(rv, list) else [])
+                else:
+                    pending = []
+            for row in pending:
+                errors.append({**row, "_step": self._call_name(expr)})
+            result = Ok(Context(data=passing, artifacts=ctx.artifacts, errors=errors))
+
+        return result
 
     def _call_name(self, node) -> str:
         if isinstance(node, Call):
