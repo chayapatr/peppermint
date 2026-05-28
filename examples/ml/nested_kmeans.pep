@@ -10,9 +10,8 @@ result = load("examples/data.csv")
           it.name,
           source: "deepinfra",
           model: "Qwen/Qwen3-Embedding-4B",
-          apikey: env.get("DEEPINFRA_TOKEN")),
-        concurrent: 10
-    )
+          apikey: env.DEEPINFRA_TOKEN))
+      @concurrent(10)
 
   # run top-level k-means
   |> ml.kmeans(k: 2..6, on: "embedding", out: "cluster")
@@ -24,7 +23,7 @@ result = load("examples/data.csv")
         out: "umap")
   |> viz.scatter(
       x: "umap_1", y: "umap_2", color: "cluster",
-      display: { labels: "name" })
+      display: { label: "name" })
 
   # run nested kmeans + viz
   |> each(by: "cluster",
@@ -38,10 +37,10 @@ result = load("examples/data.csv")
         out: "innerumap")
     |> viz.scatter(
       x: "innerumap_1", y: "innerumap_2", color: "innercluster",
-      display: { labels: "name" })
+      display: { label: "name" })
     )
 
 match(result,
-  Ok(data): print(data),
+  Ok(data): print("DONE!"),
   Err(msg): print(text.join(["error: ", msg]))
 )

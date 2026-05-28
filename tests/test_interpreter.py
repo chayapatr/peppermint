@@ -281,11 +281,11 @@ def test_rank_by_group():
 # --- add concurrent ---
 
 def test_add_concurrent_produces_correct_values():
-    result = unwrap('[{ v: 1 }, { v: 2 }, { v: 3 }] |> add(doubled: it.v * 2, concurrent: 4)')
+    result = unwrap('[{ v: 1 }, { v: 2 }, { v: 3 }] |> add(doubled: it.v * 2)\n    @concurrent(4)')
     assert [r["doubled"] for r in result] == [2, 4, 6]
 
 def test_add_concurrent_preserves_order():
-    result = unwrap('[{ i: 3 }, { i: 2 }, { i: 1 }] |> add(v: it.i, concurrent: 3)')
+    result = unwrap('[{ i: 3 }, { i: 2 }, { i: 1 }] |> add(v: it.i)\n    @concurrent(3)')
     assert [r["i"] for r in result] == [3, 2, 1]
 
 # --- Ok / Err propagation ---
@@ -445,9 +445,9 @@ def test_each_preserves_group_key():
 def test_collapse_lambda():
     result = unwrap("""
 [{ g: "a", v: 1 }, { g: "a", v: 2 }, { g: "b", v: 3 }]
-|> collapse(by: "g", total: rows -> rows |> collapse(s: sum(col.v)) |> get(0))
+|> collapse(by: "g", total: rows -> rows |> collapse(s: sum(col.v)))
 """)
-    by_g = {r["g"]: r["total"]["s"] for r in result}
+    by_g = {r["g"]: r["total"][0]["s"] for r in result}
     assert by_g["a"] == 3
     assert by_g["b"] == 3
 
@@ -455,9 +455,9 @@ def test_collapse_lambda():
 def test_collapse_lambda_no_by():
     result = unwrap("""
 [{ v: 1 }, { v: 2 }, { v: 3 }]
-|> collapse(total: rows -> rows |> collapse(s: sum(col.v)) |> get(0))
+|> collapse(total: rows -> rows |> collapse(s: sum(col.v)))
 """)
-    assert result[0]["total"]["s"] == 6
+    assert result[0]["total"][0]["s"] == 6
 
 
 # --- mean/sum on vector columns ---
@@ -713,3 +713,95 @@ def test_annotation_parsing():
     names = [a["name"] for a in step.annotations]
     assert "concurrent" in names
     assert "retry" in names
+
+
+# --- table[key] indexed lookup ---
+
+def test_table_key_lookup():
+    result = val("""
+stats = [{ cluster: 0, n: 10 }, { cluster: 1, n: 20 }]
+stats[1]
+""")
+    assert result == {"cluster": 1, "n": 20}
+
+
+def test_table_key_lookup_missing_returns_none():
+    result = val("""
+stats = [{ cluster: 0, n: 10 }]
+stats[99]
+""")
+    assert result is None
+
+
+def test_table_key_lookup_in_add():
+    result = unwrap("""
+stats = [{ cluster: 0, n: 10 }, { cluster: 1, n: 20 }]
+data = [{ id: 0 }, { id: 1 }]
+data |> add(n: stats[it.id].n)
+""")
+    assert result[0]["n"] == 10
+    assert result[1]["n"] == 20
+
+
+def test_table_key_lookup_with_context():
+    result = unwrap("""
+stats = [{ cluster: 0, label: "a" }, { cluster: 1, label: "b" }]
+data = [{ cluster: 0 }, { cluster: 1 }, { cluster: 0 }]
+data |> add(label: stats[it.cluster].label)
+""")
+    labels = [r["label"] for r in result]
+    assert labels == ["a", "b", "a"]
+
+
+def test_list_index_still_works():
+    assert val('[10, 20, 30][1]') == 20
+
+
+# --- recover ---
+
+def test_recover_literal_fallback():
+    result = unwrap('[{ v: 1 }, { v: 2 }] |> add(x: it.v * 2) |> recover(x: 0)')
+    assert [r["x"] for r in result] == [2, 4]
+
+
+def test_recover_restores_error_rows():
+    from peppermint.context import Context
+    from peppermint.stdlib.core import recover
+    from peppermint.interpreter import Interpreter, Ok
+    from peppermint.stdlib import build_global_env
+
+    ctx = Context(
+        data=[{"v": 1, "x": 2}],
+        errors=[{"v": 99, "_error": "failed", "_step": "add"}],
+    )
+    env = build_global_env()
+    interp = Interpreter(env, quiet=True)
+
+    result = recover(ctx, _interp=interp, _env=env, x=0)
+    rv = result.value if isinstance(result, Ok) else result
+    assert isinstance(rv, Context)
+    assert len(rv.data) == 2
+    assert len(rv.errors) == 0
+    assert rv.data[1]["x"] == 0
+
+
+def test_recover_expression_fallback():
+    from peppermint.context import Context
+    from peppermint.stdlib.core import recover
+    from peppermint.interpreter import Interpreter, Ok
+    from peppermint.stdlib import build_global_env
+    from peppermint.parser import parse as pparse
+
+    ctx = Context(
+        data=[{"title": "a", "label": "ok"}],
+        errors=[{"title": "fallback_title", "_error": "llm failed", "_step": "add"}],
+    )
+    env = build_global_env()
+    interp = Interpreter(env, quiet=True)
+    expr = pparse("it.title\n").body[0]
+
+    result = recover(ctx, _interp=interp, _env=env, label=expr)
+    rv = result.value if isinstance(result, Ok) else result
+    assert isinstance(rv, Context)
+    assert len(rv.data) == 2
+    assert rv.data[1]["label"] == "fallback_title"

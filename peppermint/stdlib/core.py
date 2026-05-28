@@ -110,44 +110,27 @@ def filter_(data, pred, _interp=None, _env=None, **_) -> list:
     return [item for item in _to_list(data) if _unwrap(fn(item))]
 
 
-@pep_signature("map(expr: Expr, concurrent: Int?) -> List<Any>")
-def map_(data, transform, concurrent=None, _interp=None, _env=None, **_) -> list:
-    """Transform every element. `it` refers to the current element. `concurrent: N` runs in a thread pool with N workers."""
-    concurrent = int(_eval_arg(concurrent, _interp, _env)) if concurrent is not None else None
+@pep_signature("map(expr: Expr) -> List<Any>")
+def map_(data, transform, _interp=None, _env=None, **_) -> list:
+    """Transform every element. `it` refers to the current element. Use `@concurrent(N)` for parallel execution."""
     items = _to_list(data)
     fn = _interp.make_row_fn(transform, _env)
-    if concurrent:
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=concurrent) as pool:
-            return list(pool.map(lambda item: _unwrap(fn(item)), items))
     return [_unwrap(fn(item)) for item in items]
 
 
-@pep_signature("mapi(expr: Expr, concurrent: Int?) -> List<Any>")
-
-def mapi(data, transform, concurrent=None, _interp=None, _env=None, **_) -> list:
-    """map with index. `it` is `{ idx: Int, val: Any }`. `concurrent: N` runs in a thread pool with N workers."""
-    concurrent = int(_eval_arg(concurrent, _interp, _env)) if concurrent is not None else None
+@pep_signature("mapi(expr: Expr) -> List<Any>")
+def mapi(data, transform, _interp=None, _env=None, **_) -> list:
+    """Map with index. `it` is `{ idx: Int, val: Any }`. Use `@concurrent(N)` for parallel execution."""
     items = _to_list(data)
     fn = _interp.make_row_fn(transform, _env)
     indexed = [{"idx": i, "val": x} for i, x in enumerate(items)]
-    if concurrent:
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=concurrent) as pool:
-            return list(pool.map(lambda item: _unwrap(fn(item)), indexed))
     return [_unwrap(fn(item)) for item in indexed]
 
 
-@pep_signature("add(field: Expr, concurrent: Int?, retry: Int?) -> List<Row>")
+@pep_signature("add(field: Expr) -> List<Row>")
 def add(data, _interp=None, _env=None, **kwargs) -> list:
-    """Add a new field to every row. Use `it.field` or `col.field` expressions. `concurrent: N` runs in a thread pool. `retry: N` retries on failure before writing `none`."""
+    """Add a new field to every row. Use `it.field` or `col.field` expressions. Use `@concurrent(N)` and `@retry(N)` annotations for parallel/retry execution."""
     import sys
-    concurrent = kwargs.pop("concurrent", None)
-    retry      = kwargs.pop("retry", None)
-    if concurrent is not None:
-        concurrent = int(_eval_arg(concurrent, _interp, _env))
-    if retry is not None:
-        retry = int(_eval_arg(retry, _interp, _env))
 
     non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth")}
     if len(non_meta) != 1:
@@ -168,30 +151,15 @@ def add(data, _interp=None, _env=None, **kwargs) -> list:
         return ctx.with_data(result) if ctx is not None else result
 
     fn = _interp.make_row_fn(expr, _env)
-    failures = [0]
 
     def _run(row):
-        attempts = retry + 1 if retry else 1
-        last_exc = None
-        for _ in range(attempts):
-            try:
-                return _unwrap(fn(row))
-            except Exception as e:
-                last_exc = e
-        failures[0] += 1
-        print(f"add({field}): failed after {attempts} attempt(s): {last_exc}", file=sys.stderr)
-        return None
+        try:
+            return _unwrap(fn(row))
+        except Exception as e:
+            print(f"add({field}): {e}", file=sys.stderr)
+            return None
 
-    if concurrent:
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=concurrent) as pool:
-            values = list(pool.map(_run, rows))
-    else:
-        values = [_run(row) for row in rows]
-
-    if failures[0]:
-        print(f"add({field}): {failures[0]}/{len(rows)} rows failed, written as none", file=sys.stderr)
-
+    values = [_run(row) for row in rows]
     result = [{**row, field: v} for row, v in zip(rows, values)]
     return ctx.with_data(result) if ctx is not None else result
 
@@ -362,6 +330,46 @@ def print_(data, _interp=None, _env=None, **_):
     return val
 
 
+@pep_signature("recover(field: Expr) -> List<Row>")
+def recover(data, _interp=None, _env=None, **kwargs):
+    """Move error rows back into data using a fallback expression.
+
+Applies to all rows currently in `.errors`. For each error row, evaluates
+the fallback expression with `it` bound to the row, sets the field, and
+moves the row back into `.data`. Clears `.errors` after recovery.
+
+Example: `|> add(label: ml.llm(...)) |> recover(label: "unknown")`
+Example: `|> add(label: ml.llm(...)) |> recover(label: it.title)`"""
+    from ..context import Context
+    ctx = _as_ctx(data)
+    if ctx is None or not ctx.errors:
+        return data
+
+    non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth")}
+    if not non_meta:
+        raise ValueError("recover() requires exactly one keyword argument: the field name")
+
+    field, expr = next(iter(non_meta.items()))
+    fn = _interp.make_row_fn(expr, _env)
+
+    recovered = []
+    still_failing = []
+    for row in ctx.errors:
+        try:
+            fallback = _unwrap(fn(row))
+            recovered.append({**row, field: fallback,
+                               **{k: v for k, v in row.items() if k.startswith("_") and k != field}})
+        except Exception:
+            still_failing.append(row)
+
+    from ..context import Context
+    return Context(
+        data=ctx.data + recovered,
+        artifacts=ctx.artifacts,
+        errors=still_failing,
+    )
+
+
 # --- Aggregation ---
 
 class _AggFn:
@@ -442,9 +450,11 @@ def collapse(data, _interp=None, _env=None, **kwargs) -> list:
             if isinstance(val, _AggFn):
                 row[field] = val.apply(sub_df)
             elif isinstance(val, PmFunction):
+                from ..context import Context
                 group_list = sub_df.to_dict(orient="records")
                 result = _interp._call_pm_function(val, [group_list], {}, None, _env)
-                row[field] = _unwrap(result)
+                rv = _unwrap(result)
+                row[field] = rv.data if isinstance(rv, Context) else rv
             else:
                 row[field] = val
         return row
@@ -511,9 +521,14 @@ def rolling(col_ref, window, fn, by=None, **_):
 rolling._accepts_deferred = True
 
 
-@pep_signature("get(list: List<Any>, i: Int) -> Any")
+@pep_signature("get(list: List<Any>, i: Int | Any) -> Any")
 def get(data, i, _interp=None, _env=None, **_):
-    """Get element at index. Prefer `list[i]` syntax."""
+    """Get element at index or by key. Prefer `list[i]` syntax.
+
+For tables (list of dicts or Context): `table[key]` returns the first row
+where the first column equals `key`. Returns `none` if not found.
+For plain lists: `list[i]` returns the element at integer index.
+For objects: `obj[key]` returns the value at the given key."""
     if isinstance(data, Ok): data = data.value
     i = _eval_arg(i, _interp, _env)
     if isinstance(i, Ok): i = i.value
@@ -521,6 +536,21 @@ def get(data, i, _interp=None, _env=None, **_):
         if i not in data:
             raise KeyError(f"key '{i}' not found in object")
         return data[i]
+    # Table keyed lookup: Context or list[dict]
+    from ..context import Context
+    rows = None
+    if isinstance(data, Context):
+        rows = data.data
+    elif isinstance(data, list) and data and isinstance(data[0], dict):
+        rows = data
+    if rows is not None:
+        if not rows:
+            return None
+        first_col = next(iter(rows[0]))
+        for row in rows:
+            if row.get(first_col) == i:
+                return row
+        return None
     return _to_list(data)[int(i)]
 
 
@@ -605,7 +635,7 @@ def to_int(value, _interp=None, _env=None, **_):
     return builtins_int(v)
 
 
-for _fn in (filter_, map_, mapi, add, sort, reduce, each, collapse, sum_, mean_, count_, min_, max_):
+for _fn in (filter_, map_, mapi, add, sort, reduce, each, collapse, recover, sum_, mean_, count_, min_, max_):
     _fn._accepts_deferred = True
 
 
@@ -630,7 +660,8 @@ def build_core_env() -> dict:
         "count":    count_,
         "min":      min_,
         "max":      max_,
-        "print":  print_,
+        "print":   print_,
+        "recover": recover,
         "get":    get,
         "set":    set_,
         "len":    length,
