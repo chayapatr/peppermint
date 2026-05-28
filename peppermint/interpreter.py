@@ -209,9 +209,19 @@ class Interpreter:
     # --- Field access ---
 
     def eval_field(self, node: FieldAccess, env: Env) -> Any:
+        from .context import Context
         obj = self.eval(node.obj, env)
         if isinstance(obj, Ok):
             obj = obj.value
+        if isinstance(obj, Context):
+            if node.field == "data":
+                return obj.data
+            if node.field == "errors":
+                return obj.errors
+            if node.field in obj.artifacts:
+                return obj.artifacts[node.field]
+            available = "data, errors" + (", " + ", ".join(obj.artifacts) if obj.artifacts else "")
+            raise PepError(f"context has no field '{node.field}'. available: {available}", loc=node.loc, span=len(node.field))
         if isinstance(obj, _ColProxy):
             return ColRef(node.field)
         if isinstance(obj, dict):
@@ -306,7 +316,8 @@ class Interpreter:
                 raise PepError(f"pipe step must be a PipeStep, got {type(step).__name__}")
 
             show = not (step.quiet or self.quiet)
-            before = value if isinstance(value, list) else None
+            from .context import Context as _Ctx
+            before = value.data if isinstance(value, _Ctx) else (value if isinstance(value, list) else None)
 
             try:
                 expr = step.expr
@@ -322,8 +333,10 @@ class Interpreter:
                 result = Err(f"{step_name}: {e}")
 
             after = result.value if isinstance(result, Ok) else result
-            if show and isinstance(after, list):
-                self._print_step(step.expr, before, after, depth=depth)
+            from .context import Context as _Ctx
+            after_list = after.data if isinstance(after, _Ctx) else (after if isinstance(after, list) else None)
+            if show and after_list is not None:
+                self._print_step(step.expr, before, after_list, depth=depth)
 
         # If the pipe started with an assignment (x = source |> ...), update x to the final result
         if isinstance(first, Assign):

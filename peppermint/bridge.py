@@ -98,7 +98,10 @@ def ok(val):
 # --- Row utilities ---
 
 def get_rows(val) -> list:
-    """Extract rows from a list."""
+    """Extract rows from a list or Context."""
+    from .context import Context
+    if isinstance(val, Context):
+        return val.data
     if isinstance(val, list):
         return val
     raise TypeError(f"expected a list, got {type(val).__name__}")

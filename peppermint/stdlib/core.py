@@ -29,9 +29,33 @@ def _eval_arg(arg, interp, env):
 def _to_list(data) -> list:
     if isinstance(data, Ok):
         return _to_list(data.value)
+    from ..context import Context
+    if isinstance(data, Context):
+        return data.data
     if isinstance(data, list):
         return data
     raise TypeError(f"expected a List, got {type(data).__name__}")
+
+
+def _as_ctx(data):
+    """Coerce a table (list of dicts or Context) to Context. Returns None for non-table data."""
+    from ..context import Context
+    if isinstance(data, Context):
+        return data
+    if isinstance(data, Ok):
+        return _as_ctx(data.value)
+    if isinstance(data, list):
+        if not data or isinstance(data[0], dict):
+            return Context(data=data)
+    return None
+
+
+def _is_table(data) -> bool:
+    from ..context import Context
+    if isinstance(data, Context):
+        return True
+    v = data.value if isinstance(data, Ok) else data
+    return isinstance(v, list) and (not v or isinstance(v[0], dict))
 
 
 def _unwrap(v):
@@ -44,6 +68,7 @@ def _unwrap(v):
 def load(path, _interp=None, _env=None, **_) -> Ok | Err:
     """Load a CSV or JSON file as a list of rows."""
     try:
+        from ..context import Context
         path = _eval_arg(path, _interp, _env)
         if path.endswith(".json"):
             with open(path) as f:
@@ -52,12 +77,12 @@ def load(path, _interp=None, _env=None, **_) -> Ok | Err:
         else:
             df = pd.read_csv(path)
             rows = df.to_dict(orient="records")
-        return Ok(rows)
+        return Ok(Context(data=rows))
     except Exception as e:
         return Err(str(e))
 
 
-@pep_signature("save(path: str) -> Ok<List<Row>> | Err")
+@pep_signature("save(path: str) -> Ok<Context> | Err")
 def save(data, path, _interp=None, _env=None, **_) -> Ok | Err:
     """Write a list of rows to a CSV or JSON file."""
     try:
@@ -78,9 +103,11 @@ def save(data, path, _interp=None, _env=None, **_) -> Ok | Err:
 @pep_signature("filter(pred: Expr) -> List<Row>")
 def filter_(data, pred, _interp=None, _env=None, **_) -> list:
     """Keep rows where pred is true. `it` refers to the current row."""
-    items = _to_list(data)
     fn = _interp.make_row_fn(pred, _env)
-    return [item for item in items if _unwrap(fn(item))]
+    ctx = _as_ctx(data)
+    if ctx is not None:
+        return ctx.with_data([item for item in ctx.data if _unwrap(fn(item))])
+    return [item for item in _to_list(data) if _unwrap(fn(item))]
 
 
 @pep_signature("map(expr: Expr, concurrent: Int?) -> List<Any>")
@@ -127,17 +154,20 @@ def add(data, _interp=None, _env=None, **kwargs) -> list:
         raise ValueError("add() requires exactly one keyword argument: the new field name")
     field, expr = next(iter(non_meta.items()))
 
+    ctx = _as_ctx(data)
+    rows = ctx.data if ctx is not None else _to_list(data)
+
     # Evaluate the expression to check if it's a column-level operation
     val = _unwrap(_eval_arg(expr, _interp, _env))
     if hasattr(val, "broadcast"):
-        df = pd.DataFrame(_to_list(data))
+        df = pd.DataFrame(rows)
         series = val.broadcast(df)
-        rows = df.copy()
-        rows[field] = series.values
-        return rows.to_dict(orient="records")
+        out = df.copy()
+        out[field] = series.values
+        result = out.to_dict(orient="records")
+        return ctx.with_data(result) if ctx is not None else result
 
     fn = _interp.make_row_fn(expr, _env)
-    rows = _to_list(data)
     failures = [0]
 
     def _run(row):
@@ -162,13 +192,17 @@ def add(data, _interp=None, _env=None, **kwargs) -> list:
     if failures[0]:
         print(f"add({field}): {failures[0]}/{len(rows)} rows failed, written as none", file=sys.stderr)
 
-    return [{**row, field: v} for row, v in zip(rows, values)]
+    result = [{**row, field: v} for row, v in zip(rows, values)]
+    return ctx.with_data(result) if ctx is not None else result
 
 
 @pep_signature("take(n: Int) -> List<Row>")
 def take(data, n, _interp=None, _env=None, **_) -> list:
     """Keep the first n rows."""
     n = int(_eval_arg(n, _interp, _env))
+    ctx = _as_ctx(data)
+    if ctx is not None:
+        return ctx.with_data(ctx.data[:n])
     return _to_list(data)[:n]
 
 
@@ -176,14 +210,20 @@ def take(data, n, _interp=None, _env=None, **_) -> list:
 def drop(data, field, _interp=None, _env=None, **_) -> list:
     """Remove a field from every row."""
     field = _eval_arg(field, _interp, _env)
-    return [{k: v for k, v in row.items() if k != field} for row in _to_list(data)]
+    ctx = _as_ctx(data)
+    rows = ctx.data if ctx is not None else _to_list(data)
+    result = [{k: v for k, v in row.items() if k != field} for row in rows]
+    return ctx.with_data(result) if ctx is not None else result
 
 
 @pep_signature("select(fields: str...) -> List<Row>")
 def select(data, *fields, _interp=None, _env=None, **_) -> list:
     """Keep only the specified fields."""
     fields = [_eval_arg(f, _interp, _env) for f in fields]
-    return [{f: row[f] for f in fields if f in row} for row in _to_list(data)]
+    ctx = _as_ctx(data)
+    rows = ctx.data if ctx is not None else _to_list(data)
+    result = [{f: row[f] for f in fields if f in row} for row in rows]
+    return ctx.with_data(result) if ctx is not None else result
 
 
 @pep_signature('rename(old: new) -> List<Row>')
@@ -194,7 +234,10 @@ def rename(data, _interp=None, _env=None, **kwargs) -> list:
         raise ValueError("rename() requires exactly one keyword argument: old: new")
     old, new_expr = next(iter(non_meta.items()))
     new = _eval_arg(new_expr, _interp, _env)
-    return [{(new if k == old else k): v for k, v in row.items()} for row in _to_list(data)]
+    ctx = _as_ctx(data)
+    rows = ctx.data if ctx is not None else _to_list(data)
+    result = [{(new if k == old else k): v for k, v in row.items()} for row in rows]
+    return ctx.with_data(result) if ctx is not None else result
 
 
 @pep_signature('sort(by: str, dir?: "asc" | "desc") -> List<Row>')
@@ -202,7 +245,10 @@ def sort(data, by=None, dir=None, _interp=None, _env=None, **_) -> list:
     """Sort rows by a field. `dir` defaults to `"asc"`."""
     by = _eval_arg(by, _interp, _env)
     dir = _eval_arg(dir, _interp, _env) if dir is not None else "asc"
-    return sorted(_to_list(data), key=lambda r: r.get(by) if isinstance(r, dict) else r, reverse=(dir == "desc"))
+    ctx = _as_ctx(data)
+    rows = ctx.data if ctx is not None else _to_list(data)
+    result = sorted(rows, key=lambda r: r.get(by) if isinstance(r, dict) else r, reverse=(dir == "desc"))
+    return ctx.with_data(result) if ctx is not None else result
 
 
 @pep_signature("reduce(init: Any, fn: (Any, Any) -> Any) -> Any")
@@ -224,41 +270,67 @@ def reduce(data, init, fn, _interp=None, _env=None, **_) -> Any:
 
 
 @pep_signature("each(by: str, |> ...) -> List<Row>")
-def each(data, by=None, _block=None, _interp=None, _env=None, _depth=0, **_):
-    """Run a sub-pipe for each group. Results are concatenated, or original table returned for side effects."""
+def each(data, by=None, _block=None, _interp=None, _env=None, _depth=0, **kwargs):
+    """Run a sub-pipe for each group. Results are concatenated, or original table returned for side effects.
+Accepts a block `{ |> ... }` or a lambda `x -> x |> ...` as the sub-pipe."""
     from ..ast_nodes import Pipe, Literal
+    from ..context import Context
+
+    # Lambda form: each(by: "col", x -> x |> ...)
+    fn_arg = kwargs.get("fn") or (list(kwargs.values())[0] if kwargs else None)
+    if isinstance(fn_arg, PmFunction):
+        _block = None  # use lambda path
 
     by = _eval_arg(by, _interp, _env)
     if by is None:
         raise ValueError("each() requires 'by' argument")
-    if _block is None:
-        raise ValueError("each() requires a sub-pipe: |> step or { |> step }")
+    if _block is None and fn_arg is None:
+        raise ValueError("each() requires a sub-pipe block or lambda")
 
-    rows = _to_list(data)
+    ctx = _as_ctx(data)
     groups: dict = {}
-    for row in rows:
+    for row in ctx.data:
         key = row.get(by)
         groups.setdefault(key, []).append(row)
 
     all_results = []
+    all_errors = list(ctx.errors)
+    all_artifacts = dict(ctx.artifacts)
     is_side_effect = None
 
     for key, group_rows in groups.items():
-        pipe = Pipe(steps=[Literal(group_rows)] + list(_block))
-        result = _interp.eval_pipe(pipe, _env, depth=_depth + 1)
+        group_ctx = Context(data=group_rows)
+
+        if fn_arg is not None and isinstance(fn_arg, PmFunction):
+            result = _interp._call_pm_function(fn_arg, [group_ctx], {}, None, _env)
+        else:
+            pipe = Pipe(steps=[Literal(group_ctx)] + list(_block))
+            result = _interp.eval_pipe(pipe, _env, depth=_depth + 1)
+
         if isinstance(result, Err):
             return result
         value = result.value if isinstance(result, Ok) else result
-        if isinstance(value, list):
+
+        if isinstance(value, Context):
             if is_side_effect is None:
                 is_side_effect = False
-            all_results.extend([{by: key, **row} for row in value])
+            # Re-inject group key for rows that lost it (e.g. after collapse)
+            rows_out = [r if r.get(by) is not None else {by: key, **r} for r in value.data]
+            all_results.extend(rows_out)
+            all_errors.extend(value.errors)
+            for name, artifact in value.artifacts.items():
+                all_artifacts.setdefault(name, {})[key] = artifact
+        elif isinstance(value, list):
+            if is_side_effect is None:
+                is_side_effect = False
+            rows_out = [r if (isinstance(r, dict) and r.get(by) is not None) else ({by: key, **r} if isinstance(r, dict) else r) for r in value]
+            all_results.extend(rows_out)
         else:
             is_side_effect = True
 
     if is_side_effect:
-        return rows
-    return all_results
+        return ctx
+    return Context(data=all_results, artifacts=all_artifacts, errors=all_errors)
 
 
 @pep_signature("join(other: List<Row>, on: str) -> List<Row>")
@@ -267,7 +339,10 @@ def join(data, other, on=None, _interp=None, _env=None, **_) -> list:
     on = _eval_arg(on, _interp, _env)
     other_rows = _to_list(other)
     index = {row[on]: row for row in other_rows if on in row}
-    return [{**row, **index[row.get(on)]} for row in _to_list(data) if row.get(on) in index]
+    ctx = _as_ctx(data)
+    rows = ctx.data if ctx is not None else _to_list(data)
+    result = [{**row, **index[row.get(on)]} for row in rows if row.get(on) in index]
+    return ctx.with_data(result) if ctx is not None else result
 
 
 @pep_signature("print(value: Any) -> Any")
@@ -346,7 +421,9 @@ def collapse(data, _interp=None, _env=None, **kwargs) -> list:
     by = _eval_arg(kwargs.pop("by", None), _interp, _env)
     non_meta = {k: v for k, v in kwargs.items() if not k.startswith("_")}
 
-    df = pd.DataFrame(_to_list(data))
+    ctx = _as_ctx(data)
+    rows = ctx.data if ctx is not None else _to_list(data)
+    df = pd.DataFrame(rows)
 
     def _agg_group(sub_df):
         from ..interpreter import PmFunction
@@ -364,14 +441,15 @@ def collapse(data, _interp=None, _env=None, **kwargs) -> list:
         return row
 
     if by:
-        rows = []
+        out = []
         for key, sub in df.groupby(by):
             row = {by: key}
             row.update(_agg_group(sub))
-            rows.append(row)
-        return rows
+            out.append(row)
+        return ctx.with_data(out) if ctx is not None else out
     else:
-        return [_agg_group(df)]
+        result = [_agg_group(df)]
+        return ctx.with_data(result) if ctx is not None else result
 
 
 def agg(data, _interp=None, _env=None, **kwargs) -> list:
@@ -476,16 +554,17 @@ def concat(*args, _interp=None, _env=None, **_):
 def unique(data, by=None, _interp=None, _env=None, **_):
     """Remove duplicate rows, keeping the first occurrence. `by` specifies the field to deduplicate on."""
     by = _eval_arg(by, _interp, _env)
-    rows = _to_list(data)
+    ctx = _as_ctx(data)
+    rows = ctx.data if ctx is not None else _to_list(data)
     if by is None:
         seen = set()
         result = []
         for row in rows:
-            key = tuple(sorted(row.items()))
+            key = tuple(sorted(row.items())) if isinstance(row, dict) else row
             if key not in seen:
                 seen.add(key)
                 result.append(row)
-        return result
+        return ctx.with_data(result) if ctx is not None else result
     seen = set()
     result = []
     for row in rows:
@@ -493,7 +572,7 @@ def unique(data, by=None, _interp=None, _env=None, **_):
         if key not in seen:
             seen.add(key)
             result.append(row)
-    return result
+    return ctx.with_data(result) if ctx is not None else result
 
 
 @pep_signature("str(value: Any) -> str")

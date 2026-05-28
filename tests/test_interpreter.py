@@ -17,6 +17,27 @@ def val(src: str):
     return result
 
 
+def unwrap(src: str):
+    """Run and return rows (Context.data), plain list, or scalar."""
+    from peppermint.context import Context
+    result = run(src)
+    if isinstance(result, Ok):
+        v = result.value
+        if isinstance(v, Context):
+            return v.data
+        return v
+    return result
+
+
+def ctx(src: str):
+    """Run and return the full Context for artifact/error assertions."""
+    from peppermint.context import Context
+    result = run(src)
+    if isinstance(result, Ok) and isinstance(result.value, Context):
+        return result.value
+    return result
+
+
 # --- Literals ---
 
 def test_int():         assert val("42") == 42
@@ -160,40 +181,34 @@ def test_pipe_err_short_circuits():
 # --- collapse ---
 
 def test_collapse_sum():
-    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> collapse(total: sum(col.v))')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 1 }, { v: 2 }, { v: 3 }] |> collapse(total: sum(col.v))')
     assert result[0]["total"] == 6
 
 def test_collapse_mean():
-    result = val('[{ v: 10 }, { v: 20 }] |> collapse(avg: mean(col.v))')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 10 }, { v: 20 }] |> collapse(avg: mean(col.v))')
     assert result[0]["avg"] == pytest.approx(15.0)
 
 def test_collapse_count():
-    result = val('[{ x: 1 }, { x: 2 }, { x: 3 }] |> collapse(n: count())')
-    assert isinstance(result, list)
+    result = unwrap('[{ x: 1 }, { x: 2 }, { x: 3 }] |> collapse(n: count())')
     assert result[0]["n"] == 3
 
 def test_collapse_min():
-    result = val('[{ v: 5 }, { v: 2 }, { v: 8 }] |> collapse(lo: min(col.v))')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 5 }, { v: 2 }, { v: 8 }] |> collapse(lo: min(col.v))')
     assert result[0]["lo"] == 2
 
 def test_collapse_max():
-    result = val('[{ v: 5 }, { v: 2 }, { v: 8 }] |> collapse(hi: max(col.v))')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 5 }, { v: 2 }, { v: 8 }] |> collapse(hi: max(col.v))')
     assert result[0]["hi"] == 8
 
 def test_collapse_multi():
-    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> collapse(total: sum(col.v), n: count(), avg: mean(col.v))')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 1 }, { v: 2 }, { v: 3 }] |> collapse(total: sum(col.v), n: count(), avg: mean(col.v))')
     row = result[0]
     assert row["total"] == 6
     assert row["n"] == 3
     assert row["avg"] == pytest.approx(2.0)
 
 def test_collapse_by():
-    result = val("""
+    result = unwrap("""
 [
   { region: "A", income: 10 },
   { region: "A", income: 20 },
@@ -201,7 +216,6 @@ def test_collapse_by():
 ]
 |> collapse(by: "region", total: sum(col.income), n: count())
 """)
-    assert isinstance(result, list)
     assert len(result) == 2
     by_region = {r["region"]: r for r in result}
     assert by_region["A"]["total"] == 30
@@ -210,8 +224,7 @@ def test_collapse_by():
     assert by_region["B"]["n"] == 1
 
 def test_collapse_by_preserves_key():
-    result = val('[{ cat: "x", v: 1 }, { cat: "x", v: 2 }, { cat: "y", v: 3 }] |> collapse(by: "cat", n: count())')
-    assert isinstance(result, list)
+    result = unwrap('[{ cat: "x", v: 1 }, { cat: "x", v: 2 }, { cat: "y", v: 3 }] |> collapse(by: "cat", n: count())')
     assert all("cat" in r for r in result)
 
 
@@ -224,8 +237,7 @@ def test_col_ref():
     assert result.field == "salary"
 
 def test_add_broadcast_mean():
-    result = val('[{ g: "a", v: 10 }, { g: "a", v: 20 }, { g: "b", v: 30 }] |> add(avg: mean(col.v, by: "g"))')
-    assert isinstance(result, list)
+    result = unwrap('[{ g: "a", v: 10 }, { g: "a", v: 20 }, { g: "b", v: 30 }] |> add(avg: mean(col.v, by: "g"))')
     by_g = {r["g"]: r["avg"] for r in result}
     assert by_g["a"] == pytest.approx(15.0)
     assert by_g["b"] == pytest.approx(30.0)
@@ -238,27 +250,27 @@ def test_take():
     assert result == [1, 2, 3]
 
 def test_take_table():
-    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> take(2)')
+    result = unwrap('[{ v: 1 }, { v: 2 }, { v: 3 }] |> take(2)')
     assert len(result) == 2
 
 
 # --- rank ---
 
 def test_rank_asc():
-    result = val('[{ v: 30 }, { v: 10 }, { v: 20 }] |> add(r: rank(col.v))')
+    result = unwrap('[{ v: 30 }, { v: 10 }, { v: 20 }] |> add(r: rank(col.v))')
     ranks = {row["v"]: row["r"] for row in result}
     assert ranks[10] == 1
     assert ranks[20] == 2
     assert ranks[30] == 3
 
 def test_rank_desc():
-    result = val('[{ v: 30 }, { v: 10 }, { v: 20 }] |> add(r: rank(col.v, dir: "desc"))')
+    result = unwrap('[{ v: 30 }, { v: 10 }, { v: 20 }] |> add(r: rank(col.v, dir: "desc"))')
     ranks = {row["v"]: row["r"] for row in result}
     assert ranks[30] == 1
     assert ranks[10] == 3
 
 def test_rank_by_group():
-    result = val('[{ g: "a", v: 10 }, { g: "a", v: 20 }, { g: "b", v: 5 }, { g: "b", v: 15 }] |> add(r: rank(col.v, by: "g"))')
+    result = unwrap('[{ g: "a", v: 10 }, { g: "a", v: 20 }, { g: "b", v: 5 }, { g: "b", v: 15 }] |> add(r: rank(col.v, by: "g"))')
     by_gv = {(row["g"], row["v"]): row["r"] for row in result}
     assert by_gv[("a", 10)] == 1
     assert by_gv[("a", 20)] == 2
@@ -269,15 +281,11 @@ def test_rank_by_group():
 # --- add concurrent ---
 
 def test_add_concurrent_produces_correct_values():
-    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> add(doubled: it.v * 2, concurrent: 4)')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 1 }, { v: 2 }, { v: 3 }] |> add(doubled: it.v * 2, concurrent: 4)')
     assert [r["doubled"] for r in result] == [2, 4, 6]
 
 def test_add_concurrent_preserves_order():
-    import time
-    # Each row sleeps proportional to its index in reverse — if order isn't preserved,
-    # results would come back sorted by completion time
-    result = val('[{ i: 3 }, { i: 2 }, { i: 1 }] |> add(v: it.i, concurrent: 3)')
+    result = unwrap('[{ i: 3 }, { i: 2 }, { i: 1 }] |> add(v: it.i, concurrent: 3)')
     assert [r["i"] for r in result] == [3, 2, 1]
 
 # --- Ok / Err propagation ---
@@ -390,7 +398,7 @@ index_in(["x", "y", "z"])("x")
 # --- each ---
 
 def test_each_collapse():
-    result = val("""
+    result = unwrap("""
 [
   { region: "A", v: 10 },
   { region: "A", v: 20 },
@@ -398,7 +406,6 @@ def test_each_collapse():
 ]
 |> each(by: "region", |> collapse(total: sum(col.v), n: count()))
 """)
-    assert isinstance(result, list)
     assert len(result) == 2
     by_region = {r["region"]: r for r in result}
     assert by_region["A"]["total"] == 30
@@ -407,7 +414,7 @@ def test_each_collapse():
     assert by_region["B"]["n"] == 1
 
 def test_each_multi_step():
-    result = val("""
+    result = unwrap("""
 [
   { g: "x", v: 3 },
   { g: "x", v: 1 },
@@ -420,14 +427,13 @@ def test_each_multi_step():
     |> filter(it.rank <= 2)
 )
 """)
-    assert isinstance(result, list)
     assert len(result) == 4
     x_rows = sorted([r for r in result if r["g"] == "x"], key=lambda r: r["rank"])
     assert x_rows[0]["v"] == 3
     assert x_rows[1]["v"] == 2
 
 def test_each_preserves_group_key():
-    result = val("""
+    result = unwrap("""
 [{ cat: "a", v: 1 }, { cat: "b", v: 2 }]
 |> each(by: "cat", |> collapse(n: count()))
 """)
@@ -437,18 +443,17 @@ def test_each_preserves_group_key():
 # --- collapse with lambda ---
 
 def test_collapse_lambda():
-    result = val("""
+    result = unwrap("""
 [{ g: "a", v: 1 }, { g: "a", v: 2 }, { g: "b", v: 3 }]
 |> collapse(by: "g", total: rows -> rows |> collapse(s: sum(col.v)) |> get(0))
 """)
-    assert isinstance(result, list)
     by_g = {r["g"]: r["total"]["s"] for r in result}
     assert by_g["a"] == 3
     assert by_g["b"] == 3
 
 
 def test_collapse_lambda_no_by():
-    result = val("""
+    result = unwrap("""
 [{ v: 1 }, { v: 2 }, { v: 3 }]
 |> collapse(total: rows -> rows |> collapse(s: sum(col.v)) |> get(0))
 """)
@@ -458,18 +463,17 @@ def test_collapse_lambda_no_by():
 # --- mean/sum on vector columns ---
 
 def test_collapse_mean_vector():
-    result = val("""
+    result = unwrap("""
 [{ g: "a", vec: [1.0, 2.0] }, { g: "a", vec: [3.0, 4.0] }, { g: "b", vec: [10.0, 20.0] }]
 |> collapse(by: "g", centroid: mean(col.vec))
 """)
-    assert isinstance(result, list)
     by_g = {r["g"]: r["centroid"] for r in result}
     assert by_g["a"] == [2.0, 3.0]
     assert by_g["b"] == [10.0, 20.0]
 
 
 def test_collapse_sum_vector():
-    result = val("""
+    result = unwrap("""
 [{ vec: [1.0, 2.0] }, { vec: [3.0, 4.0] }]
 |> collapse(total: sum(col.vec))
 """)
@@ -479,7 +483,7 @@ def test_collapse_sum_vector():
 # --- join + centroid pattern ---
 
 def test_join_centroid_pattern():
-    result = val("""
+    result = unwrap("""
 data = [
     { g: "a", v: 1.0 },
     { g: "a", v: 3.0 },
@@ -488,7 +492,6 @@ data = [
 centroids = data |> collapse(by: "g", centroid: mean(col.v))
 data |> join(centroids, on: "g")
 """)
-    assert isinstance(result, list)
     assert len(result) == 3
     assert all("centroid" in r for r in result)
     a_rows = [r for r in result if r["g"] == "a"]
