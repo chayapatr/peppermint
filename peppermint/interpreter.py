@@ -292,7 +292,8 @@ class Interpreter:
 
     def eval_pipe(self, node: Pipe, env: Env, depth: int = 0) -> Any:
         # Source enters the pipe — always wrap in Ok so every step sees Result
-        source = self.eval(node.steps[0], env)
+        first = node.steps[0]
+        source = self.eval(first, env)
         result = source if isinstance(source, (Ok, Err)) else Ok(source)
 
         for step in node.steps[1:]:
@@ -323,6 +324,11 @@ class Interpreter:
             after = result.value if isinstance(result, Ok) else result
             if show and isinstance(after, list):
                 self._print_step(step.expr, before, after, depth=depth)
+
+        # If the pipe started with an assignment (x = source |> ...), update x to the final result
+        if isinstance(first, Assign):
+            final = result.value if isinstance(result, Ok) else result
+            env.set(first.name, final)
 
         return result
 

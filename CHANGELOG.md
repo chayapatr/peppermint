@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.3.4 — 2026-05-27
+
+### Interpreter (breaking fix)
+
+- Fixed pipe-step assignments inside lambda block bodies (`x = data |> f() |> g()`): `x` now holds the final pipe result (after all steps), not the raw source value. Previously, `x = data |> collapse(...)` would bind `x` to `data`, making subsequent references to `x` silently return the wrong value.
+
+### LSP
+
+- Fixed false-positive "Undefined name" for variables assigned inside a lambda block body `( )` via a pipe step (`x = data |> ...`). The block scope scanner now extracts pipe-step assignments when building `block_known`, so later statements in the same block can reference them without a warning.
+
+### Parser
+
+- Fixed `'Parser' object has no attribute '_cur'` crash when `#` comments appeared inside a lambda block body `( )` — `_cur()` was called but never defined; now an alias for `_peek()`
+
+### viz
+
+- `viz.line(x, y, color?, size?, file?, display?)` : line chart with per-group lines; `display.dotsize` adds scatter dots on top of each line; supports `legend`, `axes`, `title`
+
+---
+
 ## 0.3.3 — 2026-05-25
 
 ### Standard library
@@ -50,6 +70,8 @@
 - Bare keys in object literals (`{ legend, axes }`) are treated as `true` — old list form `display: ["legend"]` still accepted
 - `viz.scatter(size: [w, h])` : figure dimensions in inches
 - `viz.scatter(display: { dotsize: N | "col" })` : uniform dot size or column-mapped variable size
+- `viz.scatter`, `viz.histogram`, `viz.heatmap`, `viz.plot`, `viz.grid` all accept `file?: str` — saves image to path while still opening it
+- `display: { labels: "col" }` renamed to `display: { label: "col" }` for consistency with top-level `color:` param
 
 ### LSP
 

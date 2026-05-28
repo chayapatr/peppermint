@@ -24,7 +24,7 @@ result = load("examples/data.csv")
         out: "umap")
   |> viz.scatter(
       x: "umap_1", y: "umap_2", color: "cluster",
-      display: { label: "name" })
+      display: { labels: "name" })
 
   # run nested kmeans + viz
   |> each(by: "cluster",
@@ -38,7 +38,7 @@ result = load("examples/data.csv")
         out: "innerumap")
     |> viz.scatter(
       x: "innerumap_1", y: "innerumap_2", color: "innercluster",
-      display: { label: "name" })
+      display: { labels: "name" })
     )
 
 match(result,

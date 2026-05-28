@@ -46,13 +46,14 @@ def _resolve_model(model, save_model, load_model):
 
 
 @pep_fn_lazy
-@pep_signature("ml.kmeans(k: Int | Range, on: str, out: str, model?: str, save_model?: str, load_model?: str) -> List<Row>")
-def kmeans(data, k=None, on=None, out=None, model=None, save_model=None, load_model=None):
+@pep_signature('ml.kmeans(k: Int | Range, on: str, out: str, model?: str, method?: "silhouette" | "elbow", save_model?: str, load_model?: str) -> List<Row>')
+def kmeans(data, k=None, on=None, out=None, model=None, method="silhouette", save_model=None, load_model=None):
     """K-means clustering.
 
 `on`: vector column name (omit to use all numeric cols).
-`k`: number of clusters, or a range (e.g. `2..8`) for auto-selection by silhouette score.
+`k`: number of clusters, or a range (e.g. `2..8`) for auto-selection.
 `out`: name for the cluster label column.
+`method`: auto-selection strategy when `k` is a range — `"silhouette"` (default) maximizes cohesion; `"elbow"` picks the knee in inertia curve.
 `model`: load if file exists, else fit and save (shorthand for `save_model`/`load_model`)."""
     import numpy as np
     from sklearn.cluster import KMeans
@@ -83,16 +84,32 @@ def kmeans(data, k=None, on=None, out=None, model=None, save_model=None, load_mo
         if k is None:
             return err("kmeans: k is required")
         if isinstance(k, PmRange):
-            best_k, best_score, best_model, best_labels = None, -1, None, None
-            for ki in range(k.start, k.end + 1):
+            ks = range(k.start, k.end + 1)
+            models = {}
+            for ki in ks:
                 m = KMeans(n_clusters=ki, random_state=42, n_init="auto")
-                lbls = m.fit_predict(X)
-                if len(set(lbls)) > 1:
-                    s = silhouette_score(X, lbls)
-                    if s > best_score:
-                        best_k, best_score, best_model, best_labels = ki, s, m, lbls
-            fitted, labels = best_model, best_labels
-            print(f"kmeans: best k={best_k}, silhouette={best_score:.3f}", file=sys.stderr)
+                m.fit(X)
+                models[ki] = m
+
+            if method == "elbow":
+                inertias = {ki: m.inertia_ for ki, m in models.items()}
+                ks_list = sorted(inertias)
+                diffs = [inertias[ks_list[i]] - inertias[ks_list[i+1]] for i in range(len(ks_list)-1)]
+                diffs2 = [diffs[i] - diffs[i+1] for i in range(len(diffs)-1)]
+                best_k = ks_list[diffs2.index(max(diffs2)) + 1]
+                print(f"kmeans: elbow k={best_k}, inertia={inertias[best_k]:.1f}", file=sys.stderr)
+            else:
+                best_k, best_score = None, -1
+                for ki, m in models.items():
+                    lbls = m.labels_
+                    if len(set(lbls)) > 1:
+                        s = silhouette_score(X, lbls)
+                        if s > best_score:
+                            best_k, best_score = ki, s
+                print(f"kmeans: best k={best_k}, silhouette={best_score:.3f}", file=sys.stderr)
+
+            fitted = models[best_k]
+            labels = fitted.labels_
         else:
             fitted = KMeans(n_clusters=int(k), random_state=42, n_init="auto")
             labels = fitted.fit_predict(X)

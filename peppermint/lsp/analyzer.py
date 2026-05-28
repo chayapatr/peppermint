@@ -135,8 +135,13 @@ def _walk_refs(node, known: set, undefined: list):
     elif isinstance(node, PipeStep):
         _walk_refs(node.expr, known, undefined)
     elif isinstance(node, Pipe):
+        pipe_known = set(known)
         for step in node.steps:
-            _walk_refs(step, known, undefined)
+            if isinstance(step, Assign):
+                _walk_refs(step.value, pipe_known, undefined)
+                pipe_known.add(step.name)
+            else:
+                _walk_refs(step, pipe_known, undefined)
     elif isinstance(node, Lambda):
         inner = known | set(node.params) | {"it"}
         _walk_refs(node.body, inner, undefined)
@@ -152,6 +157,10 @@ def _walk_refs(node, known: set, undefined: list):
         for s in node.stmts:
             if isinstance(s, Assign):
                 block_known.add(s.name)
+            elif isinstance(s, Pipe):
+                for step in s.steps:
+                    if isinstance(step, Assign):
+                        block_known.add(step.name)
             _walk_refs(s, block_known, undefined)
     elif isinstance(node, FieldAccess):
         _walk_refs(node.obj, known, undefined)

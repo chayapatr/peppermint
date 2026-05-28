@@ -88,11 +88,11 @@
 
 | Function | Description |
 |---|---|
-| `viz.scatter(x:, y:, color?, size?, display?)` | Scatter plot — `size: [w, h]` sets figure size; `display: { label: "col", legend, axes, title: "...", dotsize: N \| "col" }` |
-| `viz.histogram(col:)` | Histogram |
-| `viz.heatmap()` | Correlation heatmap of all numeric columns |
-| `viz.plot()` | Auto-plot based on data shape |
-| `viz.grid(...)` | Multiple plots side by side |
+| `viz.scatter(x:, y:, color?, size?, file?, display?)` | Scatter plot — `size: [w, h]` sets figure size; `file: "path.png"` saves image; `display: { label: "col", legend, axes, title: "...", dotsize: N \| "col" }` |
+| `viz.histogram(col:, file?)` | Histogram — `file:` saves image |
+| `viz.heatmap(file?)` | Correlation heatmap of all numeric columns |
+| `viz.plot(file?)` | Auto-plot based on data shape |
+| `viz.grid(..., file?)` | Multiple plots side by side |
 
 ---
 

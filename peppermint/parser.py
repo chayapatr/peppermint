@@ -110,6 +110,9 @@ class Parser:
     def _peek(self) -> Token:
         return self._tokens[self._pos]
 
+    def _cur(self) -> Token:
+        return self._tokens[self._pos]
+
     def _peek2(self) -> Token:
         i = self._pos + 1
         while i < len(self._tokens) and self._tokens[i].type == "NL":
