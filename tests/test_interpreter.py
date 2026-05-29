@@ -549,6 +549,16 @@ def test_no_interpolation_in_json_string():
     result = val('use text\ntext.parse("{\\"a\\": 1}")')
     assert result == {"a": 1}
 
+def test_interpolation_mixed_with_literal_braces():
+    # {x} interpolates, { key: val } stays as literal text
+    result = val('x = "world"\n"hello {x} JSON: { key: val }"')
+    assert result == "hello world JSON: { key: val }"
+
+def test_interpolation_partial_failure_doesnt_kill_whole_string():
+    # One valid {expr} and one invalid {key: val} — valid one still interpolates
+    result = val('name = "alice"\n"hi {name} data: { x: 1 }"')
+    assert result == "hi alice data: { x: 1 }"
+
 
 # --- model shorthand resolves correctly ---
 
@@ -717,44 +727,35 @@ def test_annotation_parsing():
 
 # --- table[key] indexed lookup ---
 
-def test_table_key_lookup():
+def test_list_index_positional():
+    assert val('[10, 20, 30][1]') == 20
+
+def test_list_dict_index_positional():
+    result = val('[{ v: 10 }, { v: 20 }, { v: 30 }][1]')
+    assert result == {"v": 20}
+
+def test_find_by_col():
     result = val("""
 stats = [{ cluster: 0, n: 10 }, { cluster: 1, n: 20 }]
-stats[1]
+find(stats, "cluster", 1)
 """)
     assert result == {"cluster": 1, "n": 20}
 
-
-def test_table_key_lookup_missing_returns_none():
+def test_find_missing_returns_none():
     result = val("""
 stats = [{ cluster: 0, n: 10 }]
-stats[99]
+find(stats, "cluster", 99)
 """)
     assert result is None
 
-
-def test_table_key_lookup_in_add():
+def test_find_in_add():
     result = unwrap("""
 stats = [{ cluster: 0, n: 10 }, { cluster: 1, n: 20 }]
 data = [{ id: 0 }, { id: 1 }]
-data |> add(n: stats[it.id].n)
+data |> add(n: find(stats, "cluster", it.id).n)
 """)
     assert result[0]["n"] == 10
     assert result[1]["n"] == 20
-
-
-def test_table_key_lookup_with_context():
-    result = unwrap("""
-stats = [{ cluster: 0, label: "a" }, { cluster: 1, label: "b" }]
-data = [{ cluster: 0 }, { cluster: 1 }, { cluster: 0 }]
-data |> add(label: stats[it.cluster].label)
-""")
-    labels = [r["label"] for r in result]
-    assert labels == ["a", "b", "a"]
-
-
-def test_list_index_still_works():
-    assert val('[10, 20, 30][1]') == 20
 
 
 # --- multi add / drop ---
@@ -831,3 +832,19 @@ def test_recover_expression_fallback():
     assert isinstance(rv, Context)
     assert len(rv.data) == 2
     assert rv.data[1]["label"] == "fallback_title"
+
+
+def test_add_failure_routes_to_errors():
+    c = ctx('[{ v: 1 }, { v: none }] |> add(x: it.v + 1)')
+    assert len(c.data) == 1
+    assert c.data[0]["x"] == 2
+    assert len(c.errors) == 1
+    assert c.errors[0]["_step"] == "add(x)"
+
+
+def test_add_failure_recover_pattern():
+    result = unwrap('[{ v: 1 }, { v: none }] |> add(x: it.v + 1) |> recover(x: 0)')
+    assert len(result) == 2
+    xs = [r["x"] for r in result]
+    assert xs[0] == 2
+    assert xs[1] == 0

@@ -133,8 +133,9 @@ def mapi(data, transform, _interp=None, _env=None, **_) -> list:
 def add(data, _interp=None, _env=None, **kwargs) -> list:
     """Add one or more fields to every row. Use `it.field` or `col.field` expressions.
 Multiple fields are evaluated independently against the original row — field B cannot reference field A from the same `add` call.
-Use `@concurrent(N)` and `@retry(N)` annotations for parallel/retry execution."""
-    import sys
+Use `@concurrent(N)` and `@retry(N)` annotations for parallel/retry execution.
+If the expression fails for a row, that row moves to `.errors` (with `_error` and `_step`). Use `recover()` to handle failures."""
+    from ..context import Context
 
     non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth")}
     if not non_meta:
@@ -142,12 +143,9 @@ Use `@concurrent(N)` and `@retry(N)` annotations for parallel/retry execution.""
 
     ctx = _as_ctx(data)
     rows = ctx.data if ctx is not None else _to_list(data)
+    existing_errors = list(ctx.errors) if ctx is not None else []
 
-    # Apply each field in order, accumulating onto rows
-    # Each field is evaluated against the *original* row (before this add call),
-    # so fields within the same add() cannot reference each other
     for field, expr in non_meta.items():
-        # Check if it's a column-level broadcast operation
         val = _unwrap(_eval_arg(expr, _interp, _env))
         if hasattr(val, "broadcast"):
             df = pd.DataFrame(rows)
@@ -158,17 +156,25 @@ Use `@concurrent(N)` and `@retry(N)` annotations for parallel/retry execution.""
             continue
 
         fn = _interp.make_row_fn(expr, _env)
+        good = []
+        bad = []
 
-        def _run(row, _field=field, _fn=fn):
+        for row in rows:
             try:
-                return _unwrap(_fn(row))
+                result = _unwrap(fn(row))
+                if isinstance(result, Err):
+                    bad.append({**row, "_error": result.msg, "_step": f"add({field})"})
+                else:
+                    good.append({**row, field: result})
             except Exception as e:
-                print(f"add({_field}): {e}", file=sys.stderr)
-                return None
+                bad.append({**row, "_error": str(e), "_step": f"add({field})"})
 
-        rows = [{**row, field: _run(row)} for row in rows]
+        rows = good
+        existing_errors = existing_errors + bad
 
-    return ctx.with_data(rows) if ctx is not None else rows
+    if ctx is not None:
+        return Context(data=rows, artifacts=ctx.artifacts, errors=existing_errors)
+    return rows
 
 
 @pep_signature("take(n: Int) -> List<Row>")
@@ -199,18 +205,33 @@ def select(data, *fields, _interp=None, _env=None, **kwargs) -> list:
     ctx = _as_ctx(data)
     rows = ctx.data if ctx is not None else _to_list(data)
 
-    result = []
+    from ..context import Context
+    good = []
+    bad = []
+    existing_errors = list(ctx.errors) if ctx is not None else []
+
     for row in rows:
         new_row = {f: row[f] for f in fields if f in row}
+        failed = None
         for field, expr in non_meta.items():
             fn = _interp.make_row_fn(expr, _env)
             try:
-                new_row[field] = _unwrap(fn(row))
-            except Exception:
-                new_row[field] = None
-        result.append(new_row)
+                result = _unwrap(fn(row))
+                if isinstance(result, Err):
+                    failed = (field, result.msg)
+                    break
+                new_row[field] = result
+            except Exception as e:
+                failed = (field, str(e))
+                break
+        if failed:
+            bad.append({**row, "_error": failed[1], "_step": f"select({failed[0]})"})
+        else:
+            good.append(new_row)
 
-    return ctx.with_data(result) if ctx is not None else result
+    if ctx is not None:
+        return Context(data=good, artifacts=ctx.artifacts, errors=existing_errors + bad)
+    return good
 
 
 @pep_signature('rename(old: new) -> List<Row>')
@@ -540,14 +561,9 @@ def rolling(col_ref, window, fn, by=None, **_):
 rolling._accepts_deferred = True
 
 
-@pep_signature("get(list: List<Any>, i: Int | Any) -> Any")
+@pep_signature("get(list: List<Any>, i: Int) -> Any")
 def get(data, i, _interp=None, _env=None, **_):
-    """Get element at index or by key. Prefer `list[i]` syntax.
-
-For tables (list of dicts or Context): `table[key]` returns the first row
-where the first column equals `key`. Returns `none` if not found.
-For plain lists: `list[i]` returns the element at integer index.
-For objects: `obj[key]` returns the value at the given key."""
+    """Get element at index. Prefer `list[i]` syntax."""
     if isinstance(data, Ok): data = data.value
     i = _eval_arg(i, _interp, _env)
     if isinstance(i, Ok): i = i.value
@@ -555,22 +571,23 @@ For objects: `obj[key]` returns the value at the given key."""
         if i not in data:
             raise KeyError(f"key '{i}' not found in object")
         return data[i]
-    # Table keyed lookup: Context or list[dict]
-    from ..context import Context
-    rows = None
-    if isinstance(data, Context):
-        rows = data.data
-    elif isinstance(data, list) and data and isinstance(data[0], dict):
-        rows = data
-    if rows is not None:
-        if not rows:
-            return None
-        first_col = next(iter(rows[0]))
-        for row in rows:
-            if row.get(first_col) == i:
-                return row
-        return None
     return _to_list(data)[int(i)]
+
+
+@pep_signature("find(table: List<Row>, col: str, value: Any) -> Row | none")
+def find(data, col, value, _interp=None, _env=None, **_):
+    """Find the first row where `col` equals `value`. Returns `none` if not found.
+
+Example: `find(cluster_stats, "cluster", it.cluster).n`"""
+    col = _eval_arg(col, _interp, _env)
+    value = _eval_arg(value, _interp, _env)
+    if isinstance(value, Ok): value = value.value
+    from ..context import Context
+    rows = data.data if isinstance(data, Context) else _to_list(data)
+    for row in rows:
+        if row.get(col) == value:
+            return row
+    return None
 
 
 def set_(data, i, v, _interp=None, _env=None, **_):
@@ -649,12 +666,27 @@ def to_float(value, _interp=None, _env=None, **_):
 
 @pep_signature("int(value: Any) -> Int")
 def to_int(value, _interp=None, _env=None, **_):
-    """Convert a value to an integer."""
+    """Convert a value to an integer. Returns none for NaN or NA values."""
     v = _unwrap(_eval_arg(value, _interp, _env))
+    if v is None:
+        return None
+    try:
+        import math
+        if isinstance(v, float) and math.isnan(v):
+            return None
+    except Exception:
+        pass
+    try:
+        # Handle pandas NA
+        import pandas as pd
+        if v is pd.NA:
+            return None
+    except Exception:
+        pass
     return builtins_int(v)
 
 
-for _fn in (filter_, map_, mapi, add, sort, reduce, each, collapse, recover, sum_, mean_, count_, min_, max_):
+for _fn in (filter_, map_, mapi, add, select, sort, reduce, each, collapse, recover, sum_, mean_, count_, min_, max_):
     _fn._accepts_deferred = True
 
 
@@ -682,6 +714,7 @@ def build_core_env() -> dict:
         "print":   print_,
         "recover": recover,
         "get":    get,
+        "find":   find,
         "set":    set_,
         "len":    length,
         "take":    take,

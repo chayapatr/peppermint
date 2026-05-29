@@ -333,6 +333,7 @@ class Interpreter:
             show = not (step.quiet or self.quiet)
             from .context import Context as _Ctx
             before = value.data if isinstance(value, _Ctx) else (value if isinstance(value, list) else None)
+            errors_before = len(value.errors) if isinstance(value, _Ctx) else 0
 
             try:
                 expr = step.expr
@@ -343,7 +344,7 @@ class Interpreter:
                 ck = None
                 if self._cache:
                     from .cache import cache_key_for_step
-                    step_src = self._call_name(step.expr)
+                    step_src = repr(step.expr) + repr(step.annotations)
                     ck = cache_key_for_step(step_src, value)
                     cached = self._cache.get_step(ck)
                     if cached is not None:
@@ -351,8 +352,9 @@ class Interpreter:
                         after = cached
                         from .context import Context as _Ctx
                         after_list = after.data if isinstance(after, _Ctx) else (after if isinstance(after, list) else None)
+                        errors_after = len(after.errors) if isinstance(after, _Ctx) else 0
                         if show and after_list is not None:
-                            self._print_step(step.expr, before, after_list, depth=depth, cached=True)
+                            self._print_step(step.expr, before, after_list, depth=depth, cached=True, errors_before=errors_before, errors_after=errors_after)
                         continue
 
                 step_result = self._eval_step_with_annotations(expr, value, env, depth, step.annotations)
@@ -372,8 +374,9 @@ class Interpreter:
             after = result.value if isinstance(result, Ok) else result
             from .context import Context as _Ctx
             after_list = after.data if isinstance(after, _Ctx) else (after if isinstance(after, list) else None)
+            errors_after = len(after.errors) if isinstance(after, _Ctx) else 0
             if show and after_list is not None:
-                self._print_step(step.expr, before, after_list, depth=depth)
+                self._print_step(step.expr, before, after_list, depth=depth, errors_before=errors_before, errors_after=errors_after)
 
         # If the pipe started with an assignment (x = source |> ...), update x to the final result
         if isinstance(first, Assign):
@@ -382,7 +385,7 @@ class Interpreter:
 
         return result
 
-    def _print_step(self, call_node, before: list | None, after: list, depth: int = 0, cached: bool = False):
+    def _print_step(self, call_node, before: list | None, after: list, depth: int = 0, cached: bool = False, errors_before: int = 0, errors_after: int = 0):
         import sys
         indent = "  " * depth
         name = self._call_name(call_node)
@@ -402,6 +405,9 @@ class Interpreter:
                 line += f"  \033[31m({dropped} dropped)\033[0m"
             if added_cols:
                 line += f"  \033[32m(+{', '.join(added_cols)})\033[0m"
+        new_errors = errors_after - errors_before
+        if new_errors > 0:
+            line += f"  \033[33m({new_errors} errors)\033[0m"
         if isinstance(call_node, Call) and "concurrent" in call_node.kwargs:
             try:
                 n = self.eval(call_node.kwargs["concurrent"], {})

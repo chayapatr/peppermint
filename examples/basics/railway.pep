@@ -1,4 +1,4 @@
-# 08_railway.pep — railway-oriented error handling
+# railway.pep — whole-pipe error handling
 
 # Happy track — all steps run
 result = load("examples/people.csv")
@@ -7,7 +7,7 @@ result = load("examples/people.csv")
   |> sort(by: "ratio", dir: "desc")
 
 match(result,
-  Ok(data): print(data),
+  Ok(data): data |> print(),
   Err(msg):  print(msg)
 )
 
@@ -17,24 +17,6 @@ bad = load("examples/missing.csv")
   |> add(ratio: it.income / it.age)
 
 match(bad,
-  Ok(data): print(data),
-  Err(msg):  print(msg)
-)
-
-# Error inside a pipe step — caught and becomes Err
-risky = load("examples/people.csv")
-  |> add(inverse: 1 / it.income)   # Err if any income is 0
-
-match(risky,
-  Ok(data): data |> print(),
-  Err(msg):  print(msg)
-)
-
-# Sub-pipe errors propagate to the outer pipe
-grouped = load("examples/people.csv")
-  |> collapse(by: "region", avg: mean(col.income), n: count())
-
-match(grouped,
   Ok(data): data |> print(),
   Err(msg):  print(msg)
 )

@@ -264,18 +264,18 @@ lst[0]          # element at index
 lst[1..3]       # slice from 1 to 3 (inclusive)
 ```
 
-### Table keyed lookup
+### Cross-table lookup
 
-`table[key]` returns the first row where the first column equals `key`. Returns `none` if not found:
+`find(table, col, value)` returns the first row where `col` equals `value`. Returns `none` if not found:
 
 ```
 stats = load("cluster_stats.csv")
 
 load("data.csv")
-  |> add(cluster_n: stats[it.cluster].n)
+  |> add(cluster_n: find(stats, "cluster", it.cluster).n)
 ```
 
-This replaces `join` for most cross-table enrichment.
+`list[i]` is always positional index -- `rows[0]` is the first row.
 
 ### Dynamic field access
 
@@ -386,12 +386,12 @@ load("sales.csv")
 
 ## Cross-table enrichment
 
-Use `table[key]` for simple lookups instead of `join`:
+Use `find(table, col, value)` for single-row lookups:
 
 ```
 labels = load("cluster_labels.csv")
 load("data.csv")
-  |> add(label: labels[it.cluster].title)
+  |> add(label: find(labels, "cluster", it.cluster).title)
 ```
 
 For full inner joins:
@@ -493,3 +493,7 @@ Or use `match` to handle it per-row:
 ## Standard library
 
 See [stdlib.md](stdlib.md) for the full reference — core functions, `math`, `ml`, `viz`, `text`, and `env`.
+
+See [error.md](error.md) for how errors are handled at both the pipe and row level.
+
+See [cache.md](cache.md) for step and row caching.

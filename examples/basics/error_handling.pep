@@ -1,18 +1,29 @@
-# 03_error_handling.pep — Result type and match for error handling
+# error_handling.pep — row-level errors and recovery
+
+# When add() fails on a row, that row moves to .errors
+# Other rows continue through the pipe unaffected
 
 result = load("examples/people.csv")
-  |> filter(it.age > 18)
   |> add(ratio: it.income / it.age)
 
-match(result,
-  Ok(data): print(data),
-  Err(msg):  print(msg)
-)
+# .errors holds any rows that failed
+print(result.errors)
 
-# also works with a missing file
-bad = load("examples/does_not_exist.csv")
+# recover() pulls failed rows back with a fallback value
+result2 = load("examples/people.csv")
+  |> add(score_label: match(it.score,
+      > 0.8: "high",
+      > 0.5: "medium",
+      _:     "low"
+  ))
+  |> recover(score_label: "unknown")
+
+result2.data |> print()
+
+# match on whole-pipe errors (e.g. file not found)
+bad = load("examples/missing.csv")
 
 match(bad,
-  Ok(data): print(data),
+  Ok(data): data |> print(),
   Err(msg):  print(msg)
 )

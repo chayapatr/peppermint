@@ -10,11 +10,14 @@ result = load("examples/people.csv")
 # .data — the rows
 result.data |> print()
 
-# .errors — rows that failed any step (empty here)
+# .errors — rows that failed any step
 print(result.errors)
 
-# Dot into a named assignment to get specific fields
-summary = result.data
-  |> collapse(n: count(), avg_income: mean(col.income_k))
+# Dot into a named assignment to access artifact fields
+posts = load("examples/data.csv")
+  |> add(embedding: [0.1, 0.2, 0.3])  # placeholder
+  |> ml.kmeans(k: 2, on: "embedding", out: "cluster")
 
-print("rows: {summary.data[0].n}, avg income: {summary.data[0].avg_income}")
+posts.kmeans    # { model, k } written by ml.kmeans
+posts.data      # the rows
+posts.errors    # any rows that failed

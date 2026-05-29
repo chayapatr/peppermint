@@ -739,10 +739,10 @@ class Parser:
             expr_src = value[j+1:k-1]
             try:
                 expr_node = parse(expr_src + "\n").body[0]
+                parts.append(expr_node)
             except Exception:
-                # Not a valid expression — treat the whole string as a literal
-                return StrLit(value=value, loc=loc)
-            parts.append(expr_node)
+                # Not a valid expression — keep as literal text including the braces
+                parts.append(StrLit(value=value[j:k], loc=loc))
             i = k
         if not parts:
             return StrLit(value="", loc=loc)

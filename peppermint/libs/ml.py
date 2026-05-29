@@ -335,7 +335,10 @@ def llm(prompt, source=None, model=None, apikey=None, format=None, _row_cache=No
         if format == "json":
             import json, re
             cleaned = re.sub(r"^```json\s*|^```\s*|```$", "", content.strip(), flags=re.MULTILINE).strip()
-            result = json.loads(cleaned)
+            try:
+                result = json.loads(cleaned)
+            except json.JSONDecodeError:
+                result = None  # let @until retry
         else:
             result = content
     else:

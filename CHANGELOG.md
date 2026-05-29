@@ -1,17 +1,17 @@
 # Changelog
 
-## 0.4.0 — 2026-05-28
+## 0.4.0a1 — 2026-05-28
 
 ### Language (breaking)
 
 - `add(field: expr, concurrent: N)` and `add(field: expr, retry: N)` kwargs removed — use `@concurrent(N)` and `@retry(N)` annotations instead
 - `map(expr, concurrent: N)` and `mapi(expr, concurrent: N)` kwargs removed — use `@concurrent(N)` annotation
+- `table[key]` keyed lookup removed — use `find(table, col, value)` instead (old syntax was ambiguous between positional and keyed access)
 
 ### Language
 
-- **String interpolation** — `"{it.title} in {it.cluster}"` — any expression inside `{}` is evaluated in the current scope; `it` works inside pipe steps
+- **String interpolation** — `"{it.title} in {it.cluster}"` — any expression inside `{}` is evaluated in the current scope; `it` works inside pipe steps; per-expression fallback to literal if expression fails to parse
 - **`env.KEY`** — bare field access on `env` reads environment variables directly; `env.OPENAI_API_KEY` preferred over `env.get("OPENAI_API_KEY")`
-- **`table[key]`** — keyed row lookup: `stats[it.cluster]` returns the first row where the first column equals the key; returns `none` if not found. Use inside `add` for cross-table enrichment without `join`
 - **`@concurrent(n)`** — annotation on any pipe step or declaration; runs the step over each row in a thread pool with n workers. Replaces `concurrent:` kwarg
 - **`@retry(n)`** — annotation; retries the step on exception up to n times
 - **`@until(cond, max: n)`** — annotation on a step or `( )` block; retries rows where condition is false up to max rounds; failures go to `.errors`
@@ -20,13 +20,19 @@
 ### Runtime
 
 - **Context** — every table pipe now produces a `Context` carrying `.data`, `.errors`, and `.artifacts`. Access via dotted field: `posts.data`, `posts.errors`, `posts.kmeans`, `posts.umap`, `posts.viz`
-- **`--cache` flag** — pass `pep file.pep --cache` to enable step caching. Results stored in `.peppermint/cache/` next to the file; unchanged steps are skipped on rerun
+- **Row-level errors** — when `add(field: expr)` or `select(..., field: expr)` fails on a row, that row moves to `ctx.errors` (with `_error` and `_step` metadata) instead of silently setting `None`. Pipe output shows `(N errors)` in yellow. Use `recover()` to pull failed rows back
+- **`--cache` flag** — pass `pep file.pep --cache` to enable step caching. Results stored in `.peppermint/cache/` next to the file; unchanged steps are skipped on rerun. Cache key includes full step expression — steps with same name but different kwargs/block are cached independently
 - **Row-level cache** — `ml.embed` and `ml.llm` cache per-row results in `.peppermint/row_cache/`; only new rows hit the API on rerun
 
 ### Standard library
 
+- **`find(table, col, value)`** — find the first row where `col` equals `value`; returns `none` if not found. Replaces `table[key]` for cross-table lookup
+- **`add(a: expr, b: expr)`** — accepts multiple fields in one call; each is evaluated against the original row independently
+- **`drop("a", "b", "c")`** — accepts multiple field names
+- **`select("a", b: it.x + 1)`** — keyword args compute or rename fields inline
 - **`recover(field: expr)`** — move error rows back into data with a fallback value or expression; use after a step that may fail
-- **`ml.llm(format: "json")`** — strips markdown fences, parses response as JSON, raises on parse failure
+- **`int(value)`** — returns `none` for `NaN` and `pandas.NA` instead of raising
+- **`ml.llm(format: "json")`** — returns `none` on JSON parse failure (instead of raising), allowing `@until` to retry
 - **`ml.kmeans`** — writes `{ model, k }` to `ctx.artifacts["kmeans"]`
 - **`ml.umap`** — writes `{ model }` to `ctx.artifacts["umap"]`
 - **`ml.ols`** — writes `{ model, r2, coefficients }` to `ctx.artifacts["ols"]`

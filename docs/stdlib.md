@@ -19,7 +19,7 @@
 | `unique(by?)` | Deduplicate rows — `by:` deduplicates on a single field |
 | `each(by:, \|> ...)` | Run a sub-pipe per group, concatenate results. Accepts block or lambda form |
 | `collapse(by:, ...)` | Aggregate rows, optionally grouped. Values can be agg fns or a lambda receiving the group |
-| `join(other, on)` | Inner join on a shared key — prefer `table[key]` for single-field enrichment |
+| `join(other, on)` | Inner join on a shared key |
 | `recover(field: expr)` | Move error rows back into data with a fallback value — use after a step that may fail |
 | `sum(col.field)` | Sum — use in `collapse` or `add`. Handles vector columns element-wise |
 | `mean(col.field)` | Mean — use in `collapse` or `add`. Handles vector columns element-wise |
@@ -31,7 +31,8 @@
 | `len(list)` | Number of elements |
 | `concat(a, b, ...)` | Concatenate lists |
 | `slice(list, start, end)` | Slice a list (inclusive end) |
-| `get(list, i)` | Get element at index. On tables, `table[key]` returns first row where first column equals key |
+| `get(list, i)` | Get element at index — always positional |
+| `find(table, col, value)` | Find first row where `col` equals `value` — returns `none` if not found |
 | `print(value)` | Print and pass through |
 | `str(value)` | Convert to string |
 | `int(value)` | Convert to integer |
