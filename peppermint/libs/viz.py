@@ -7,7 +7,7 @@ import tempfile
 import subprocess
 import platform
 from ..bridge import ok, err, get_rows, pep_fn
-from ..stdlib.core import pep_signature
+from ..stdlib.core import pep_signature, _as_ctx
 
 
 _FONT = "Helvetica Neue"
@@ -111,7 +111,9 @@ def scatter(data, x=None, y=None, color=None, label=None, title=None, size=None,
 
         plt.tight_layout()
         _show(fig, file=file)
-        return ok(data)
+        from ..context import Context
+        ctx = _as_ctx(data) or Context(data=get_rows(data))
+        return ok(ctx.with_artifact("viz", {"plot": fig}))
     except Exception as e:
         return err(str(e))
 
@@ -131,7 +133,9 @@ def histogram(data, col=None, file=None):
         ax.set_ylabel("count")
         plt.tight_layout()
         _show(fig, file=file)
-        return ok(data)
+        from ..context import Context
+        ctx = _as_ctx(data) or Context(data=get_rows(data))
+        return ok(ctx.with_artifact("viz", {"plot": fig}))
     except Exception as e:
         return err(str(e))
 
@@ -200,7 +204,9 @@ def line(data, x=None, y=None, color=None, size=None, file=None, display=None):
         plt.xticks(rotation=45, ha="right")
         plt.tight_layout()
         _show(fig, file=file)
-        return ok(data)
+        from ..context import Context
+        ctx = _as_ctx(data) or Context(data=get_rows(data))
+        return ok(ctx.with_artifact("viz", {"plot": fig}))
     except Exception as e:
         return err(str(e))
 
@@ -220,7 +226,9 @@ def heatmap(data, file=None, **_):
         sns.heatmap(num_df.corr(), annot=True, fmt=".2f", ax=ax)
         plt.tight_layout()
         _show(fig, file=file)
-        return ok(data)
+        from ..context import Context
+        ctx = _as_ctx(data) or Context(data=get_rows(data))
+        return ok(ctx.with_artifact("viz", {"plot": fig}))
     except Exception as e:
         return err(str(e))
 

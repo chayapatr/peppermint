@@ -8,7 +8,7 @@ from pathlib import Path
 from peppermint.ast_nodes import (
     Program, Assign, UseDecl, NsDecl, Ident, FieldAccess,
     Call, Pipe, PipeStep, Lambda, Match, Block, Loc,
-    PatOk, PatErr,
+    PatOk, PatErr, InterpolatedStr,
 )
 
 
@@ -26,6 +26,9 @@ class AnalysisResult:
     undefined_refs: list[tuple[str, Loc]] = field(default_factory=list)
 
 
+_ANNOTATION_NAMES = frozenset({"concurrent", "retry", "until", "stable"})
+
+
 def _build_always_in_scope() -> frozenset[str]:
     """Build the set of always-in-scope names from core env + discovered libs + builtins."""
     from peppermint.stdlib.core import build_core_env
@@ -33,6 +36,7 @@ def _build_always_in_scope() -> frozenset[str]:
 
     names = set(build_core_env().keys())
     names.update({"col", "it", "true", "false", "none"})
+    names.update(_ANNOTATION_NAMES)
 
     libs_path = Path(__file__).parent.parent / "libs"
     for p in sorted(libs_path.glob("*.py")):
@@ -134,6 +138,13 @@ def _walk_refs(node, known: set, undefined: list):
             _walk_refs(v, known, undefined)
     elif isinstance(node, PipeStep):
         _walk_refs(node.expr, known, undefined)
+        # Walk annotation args (expressions like max: 5) but not the annotation names themselves
+        for ann in getattr(node, 'annotations', []):
+            for arg in ann.get("args", []):
+                if isinstance(arg, dict) and "value" in arg:
+                    _walk_refs(arg["value"], known, undefined)
+                elif not isinstance(arg, (int, float, str, bool)):
+                    _walk_refs(arg, known, undefined)
     elif isinstance(node, Pipe):
         pipe_known = set(known)
         for step in node.steps:
@@ -164,6 +175,9 @@ def _walk_refs(node, known: set, undefined: list):
             _walk_refs(s, block_known, undefined)
     elif isinstance(node, FieldAccess):
         _walk_refs(node.obj, known, undefined)
+    elif isinstance(node, InterpolatedStr):
+        for part in node.parts:
+            _walk_refs(part, known, undefined)
     elif hasattr(node, '__dataclass_fields__'):
         for fname in node.__dataclass_fields__:
             _walk_refs(getattr(node, fname), known, undefined)

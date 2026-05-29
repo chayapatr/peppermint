@@ -105,9 +105,10 @@ class PepError(Exception):
 # --- Interpreter ---
 
 class Interpreter:
-    def __init__(self, global_env: Env, quiet: bool = False):
+    def __init__(self, global_env: Env, quiet: bool = False, cache=None):
         self.env = global_env
         self.quiet = quiet
+        self._cache = cache  # Cache instance or None
 
     def run(self, program: Program) -> Any:
         result = None
@@ -140,6 +141,13 @@ class Interpreter:
             case ObjLit():              return self.eval_obj(node, env)
             case Spread(obj=o):         return self.eval(o, env)
             case Literal(value=v):              return v
+            case InterpolatedStr(parts=parts):
+                pieces = []
+                for p in parts:
+                    v = self.eval(p, env)
+                    if isinstance(v, Ok): v = v.value
+                    pieces.append("" if v is None else str(v))
+                return "".join(pieces)
             case PmFunction() | PmRange() | Ok() | Err():
                 return node  # already a runtime value, pass through
             case _ if not isinstance(node, type) and not hasattr(node, '__dataclass_fields__'):
@@ -154,6 +162,11 @@ class Interpreter:
         # Flatten nested Ok(Ok(...)) but preserve a single Ok/Err wrapper
         while isinstance(value, Ok) and isinstance(value.value, Ok):
             value = value.value
+        # Attach declaration-level annotations to the value for use in pipes
+        if node.annotations:
+            inner = value.value if isinstance(value, Ok) else value
+            if hasattr(inner, '__dict__') or isinstance(inner, PmFunction):
+                inner._annotations = node.annotations
         env.set(node.name, value)
         if isinstance(value, PmFunction):
             value.closure.set(node.name, value)
@@ -209,13 +222,25 @@ class Interpreter:
     # --- Field access ---
 
     def eval_field(self, node: FieldAccess, env: Env) -> Any:
+        from .context import Context
         obj = self.eval(node.obj, env)
         if isinstance(obj, Ok):
             obj = obj.value
+        if isinstance(obj, Context):
+            if node.field == "data":
+                return obj.data
+            if node.field == "errors":
+                return obj.errors
+            if node.field in obj.artifacts:
+                return obj.artifacts[node.field]
+            available = "data, errors" + (", " + ", ".join(obj.artifacts) if obj.artifacts else "")
+            raise PepError(f"context has no field '{node.field}'. available: {available}", loc=node.loc, span=len(node.field))
         if isinstance(obj, _ColProxy):
             return ColRef(node.field)
         if isinstance(obj, dict):
             if node.field not in obj:
+                if hasattr(obj, '__missing__'):
+                    return obj.__missing__(node.field)
                 available = ", ".join(obj.keys())
                 raise PepError(f"field '{node.field}' does not exist. available: {available}", loc=node.loc, span=len(node.field))
             return obj[node.field]
@@ -306,14 +331,39 @@ class Interpreter:
                 raise PepError(f"pipe step must be a PipeStep, got {type(step).__name__}")
 
             show = not (step.quiet or self.quiet)
-            before = value if isinstance(value, list) else None
+            from .context import Context as _Ctx
+            before = value.data if isinstance(value, _Ctx) else (value if isinstance(value, list) else None)
+            errors_before = len(value.errors) if isinstance(value, _Ctx) else 0
 
             try:
                 expr = step.expr
                 if isinstance(expr, (Ident, FieldAccess)):
                     expr = Call(func=expr, args=[], kwargs={}, block=None, loc=expr.loc)
-                step_result = self.eval_call(expr, value, env, depth=depth)
+
+                # Cache check
+                ck = None
+                if self._cache:
+                    from .cache import cache_key_for_step
+                    step_src = repr(step.expr) + repr(step.annotations)
+                    ck = cache_key_for_step(step_src, value)
+                    cached = self._cache.get_step(ck)
+                    if cached is not None:
+                        result = Ok(cached)
+                        after = cached
+                        from .context import Context as _Ctx
+                        after_list = after.data if isinstance(after, _Ctx) else (after if isinstance(after, list) else None)
+                        errors_after = len(after.errors) if isinstance(after, _Ctx) else 0
+                        if show and after_list is not None:
+                            self._print_step(step.expr, before, after_list, depth=depth, cached=True, errors_before=errors_before, errors_after=errors_after)
+                        continue
+
+                step_result = self._eval_step_with_annotations(expr, value, env, depth, step.annotations)
                 result = step_result if isinstance(step_result, (Ok, Err)) else Ok(step_result)
+
+                # Cache write
+                if ck and isinstance(result, Ok):
+                    self._cache.set_step(ck, result.value)
+
             except PepError as e:
                 step_name = self._call_name(step.expr)
                 result = Err(f"{step_name}: {e}", cause=e)
@@ -322,8 +372,11 @@ class Interpreter:
                 result = Err(f"{step_name}: {e}")
 
             after = result.value if isinstance(result, Ok) else result
-            if show and isinstance(after, list):
-                self._print_step(step.expr, before, after, depth=depth)
+            from .context import Context as _Ctx
+            after_list = after.data if isinstance(after, _Ctx) else (after if isinstance(after, list) else None)
+            errors_after = len(after.errors) if isinstance(after, _Ctx) else 0
+            if show and after_list is not None:
+                self._print_step(step.expr, before, after_list, depth=depth, errors_before=errors_before, errors_after=errors_after)
 
         # If the pipe started with an assignment (x = source |> ...), update x to the final result
         if isinstance(first, Assign):
@@ -332,7 +385,7 @@ class Interpreter:
 
         return result
 
-    def _print_step(self, call_node, before: list | None, after: list, depth: int = 0):
+    def _print_step(self, call_node, before: list | None, after: list, depth: int = 0, cached: bool = False, errors_before: int = 0, errors_after: int = 0):
         import sys
         indent = "  " * depth
         name = self._call_name(call_node)
@@ -352,13 +405,124 @@ class Interpreter:
                 line += f"  \033[31m({dropped} dropped)\033[0m"
             if added_cols:
                 line += f"  \033[32m(+{', '.join(added_cols)})\033[0m"
+        new_errors = errors_after - errors_before
+        if new_errors > 0:
+            line += f"  \033[33m({new_errors} errors)\033[0m"
         if isinstance(call_node, Call) and "concurrent" in call_node.kwargs:
             try:
                 n = self.eval(call_node.kwargs["concurrent"], {})
                 line += f"  \033[2m[{n} concurrent]\033[0m"
             except Exception:
                 pass
+        if cached:
+            line += f"  \033[2m[cached]\033[0m"
         print(line, file=sys.stderr)
+
+    def _resolve_annotation_arg(self, arg, env):
+        """Evaluate an annotation argument -- plain int/str or an AST node."""
+        if isinstance(arg, dict) and "key" in arg:
+            return arg["key"], self.eval(arg["value"], env)
+        if isinstance(arg, (int, float, str, bool)):
+            return arg
+        return self.eval(arg, env)
+
+    def _eval_step_with_annotations(self, expr, value, env, depth, annotations):
+        """Execute a pipe step, applying @concurrent, @retry, @until annotations."""
+        from .context import Context
+
+        # Extract annotation values
+        concurrent_n = None
+        retry_n = 0
+        until_cond = None
+        until_max = 5
+
+        for ann in annotations:
+            name = ann["name"]
+            args = ann["args"]
+            if name == "concurrent" and args:
+                concurrent_n = int(self._resolve_annotation_arg(args[0], env))
+            elif name == "retry" and args:
+                retry_n = int(self._resolve_annotation_arg(args[0], env))
+            elif name == "until":
+                for a in args:
+                    if isinstance(a, dict) and a.get("key") == "max":
+                        until_max = int(self.eval(a["value"], env))
+                    elif not isinstance(a, dict):
+                        until_cond = a
+
+        def _run_once(input_value):
+            return self.eval_call(expr, input_value, env, depth=depth)
+
+        def _run_with_retry(input_value):
+            last_err = None
+            for attempt in range(retry_n + 1):
+                try:
+                    r = _run_once(input_value)
+                    if not isinstance(r, Err):
+                        return r
+                    last_err = r
+                except Exception as e:
+                    last_err = Err(str(e))
+            return last_err
+
+        run_fn = _run_with_retry if retry_n else _run_once
+
+        # @concurrent: run step row-by-row in a thread pool
+        if concurrent_n and isinstance(value, Context):
+            from concurrent.futures import ThreadPoolExecutor
+            rows = value.data
+            def _run_row(row):
+                row_ctx = Context(data=[row], artifacts=value.artifacts, errors=[])
+                r = run_fn(row_ctx)
+                rv = r.value if isinstance(r, Ok) else None
+                if isinstance(rv, Context):
+                    return rv.data, rv.errors
+                return [row], [{"_error": str(r), "_step": self._call_name(expr)}] if isinstance(r, Err) else ([row], [])
+            with ThreadPoolExecutor(max_workers=concurrent_n) as pool:
+                parts = list(pool.map(_run_row, rows))
+            merged_data = []
+            merged_errors = list(value.errors)
+            for data_part, err_part in parts:
+                merged_data.extend(data_part)
+                merged_errors.extend(err_part)
+            result = Ok(Context(data=merged_data, artifacts=value.artifacts, errors=merged_errors))
+        else:
+            result = run_fn(value)
+
+        # @until: retry rows that don't satisfy the condition
+        if until_cond is not None and isinstance(result, Ok):
+            ctx = result.value if isinstance(result.value, Context) else Context(data=result.value if isinstance(result.value, list) else [])
+            passing = []
+            pending = list(ctx.data)
+            errors = list(ctx.errors)
+            for attempt in range(until_max):
+                if not pending:
+                    break
+                new_passing = []
+                new_pending = []
+                for row in pending:
+                    try:
+                        passes = self.eval(until_cond, env.extend({"it": row}))
+                        if isinstance(passes, Ok): passes = passes.value
+                    except Exception:
+                        passes = False
+                    if passes:
+                        new_passing.append(row)
+                    else:
+                        new_pending.append({**row, "_attempts": row.get("_attempts", 0) + 1})
+                passing.extend(new_passing)
+                if new_pending:
+                    retry_ctx = Context(data=new_pending, artifacts=ctx.artifacts, errors=[])
+                    retry_result = run_fn(retry_ctx)
+                    rv = retry_result.value if isinstance(retry_result, Ok) else None
+                    pending = rv.data if isinstance(rv, Context) else (rv if isinstance(rv, list) else [])
+                else:
+                    pending = []
+            for row in pending:
+                errors.append({**row, "_step": self._call_name(expr)})
+            result = Ok(Context(data=passing, artifacts=ctx.artifacts, errors=errors))
+
+        return result
 
     def _call_name(self, node) -> str:
         if isinstance(node, Call):
@@ -419,10 +583,14 @@ class Interpreter:
                     return v.value if isinstance(v, Ok) else v
                 args = pre + [_unwrap_ok(self.eval(a, env)) for a in node.args]
                 kwargs = {k: _unwrap_ok(self.eval(v, env)) for k, v in node.kwargs.items()}
+            _VOLATILE = {"embed", "llm"}
+            fn_name = self._call_name(node.func).split(".")[-1]
+            extra = {}
             if _check_accepts_interp(fn):
-                result = fn(*args, **kwargs, _block=node.block, _env=env, _interp=self, _depth=depth)
-            else:
-                result = fn(*args, **kwargs)
+                extra = {"_block": node.block, "_env": env, "_interp": self, "_depth": depth}
+            if self._cache and fn_name in _VOLATILE:
+                extra["_row_cache"] = self._cache
+            result = fn(*args, **kwargs, **extra) if extra else fn(*args, **kwargs)
             # Unwrap nested Ok(Ok(...))
             while isinstance(result, Ok) and isinstance(result.value, Ok):
                 result = result.value

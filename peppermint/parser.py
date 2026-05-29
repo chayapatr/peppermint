@@ -37,6 +37,7 @@ _TOKEN_RE = re.compile(r"""
     (?P<COMMA>    ,                                       )  |
     (?P<COLON>    :                                       )  |
     (?P<EQUALS>   =                                       )  |
+    (?P<AT>       @                                       )  |
     (?P<NL>       [\n;]+                                  )  |
     (?P<NAME>     [a-zA-Z_][a-zA-Z0-9_]*                  )  |
     (?P<WS>       [ \t]+                                  )  |
@@ -232,7 +233,8 @@ class Parser:
         name_tok = self._eat("NAME")
         self._eat("EQUALS")
         value = self._parse_expr()
-        return Assign(name=name_tok.value, value=value, loc=self._loc(name_tok))
+        annotations = self._parse_annotations()
+        return Assign(name=name_tok.value, value=value, annotations=annotations, loc=self._loc(name_tok))
 
     # --- Expressions (precedence climbing) ---
 
@@ -338,13 +340,44 @@ class Parser:
                 node = Pipe(steps=[node, step])
         return node
 
+    def _parse_annotations(self) -> list:
+        """Parse zero or more @name or @name(args) annotations on the same or next line."""
+        annotations = []
+        while True:
+            # Peek past newlines to check for @ without consuming if not found
+            saved = self._pos
+            self._skip_nl()
+            if not self._at("AT"):
+                self._pos = saved  # restore — no annotation found
+                break
+            self._eat("AT")
+            name = self._eat("NAME").value
+            args = []
+            if self._at("LPAREN"):
+                self._eat("LPAREN")
+                while not self._at("RPAREN"):
+                    # Parse annotation args: positional exprs and key: val pairs
+                    if self._at("NAME") and self._peek2().type == "COLON":
+                        key = self._eat("NAME").value
+                        self._eat("COLON")
+                        val = self._parse_expr()
+                        args.append({"key": key, "value": val})
+                    else:
+                        args.append(self._parse_expr())
+                    if self._at("COMMA"):
+                        self._eat("COMMA")
+                self._eat("RPAREN")
+            annotations.append({"name": name, "args": args})
+        return annotations
+
     def _parse_pipe_step(self) -> PipeStep:
         expr = self._parse_postfix()
         quiet = False
         if self._at("QUIET"):
             self._eat("QUIET")
             quiet = True
-        return PipeStep(expr=expr, quiet=quiet)
+        annotations = self._parse_annotations()
+        return PipeStep(expr=expr, quiet=quiet, annotations=annotations)
 
     def _parse_logic(self):
         node = self._parse_cmp()
@@ -487,7 +520,10 @@ class Parser:
             self._eat("STRING")
             raw = tok.value[1:-1]
             value = raw.encode("raw_unicode_escape").decode("unicode_escape")
-            return StrLit(value=value, loc=self._loc(tok))
+            loc = self._loc(tok)
+            if "{" in value:
+                return self._parse_interpolated(value, loc)
+            return StrLit(value=value, loc=loc)
 
         if tok.type == "TRUE":
             self._eat("TRUE")
@@ -677,6 +713,42 @@ class Parser:
             self._eat("NAME")
             return Ident(name=tok.value, loc=self._loc(tok))
         raise ParseError(f"expected pattern value, got {tok.type}", tok.line, tok.col)
+
+    def _parse_interpolated(self, value: str, loc):
+        """Parse a string containing {expr} interpolations into an InterpolatedStr node."""
+        from .ast_nodes import InterpolatedStr, StrLit
+        parts = []
+        i = 0
+        while i < len(value):
+            j = value.find("{", i)
+            if j == -1:
+                if i < len(value):
+                    parts.append(StrLit(value=value[i:], loc=loc))
+                break
+            if j > i:
+                parts.append(StrLit(value=value[i:j], loc=loc))
+            # Find matching closing brace (handle nesting)
+            depth = 1
+            k = j + 1
+            while k < len(value) and depth > 0:
+                if value[k] == "{":
+                    depth += 1
+                elif value[k] == "}":
+                    depth -= 1
+                k += 1
+            expr_src = value[j+1:k-1]
+            try:
+                expr_node = parse(expr_src + "\n").body[0]
+                parts.append(expr_node)
+            except Exception:
+                # Not a valid expression — keep as literal text including the braces
+                parts.append(StrLit(value=value[j:k], loc=loc))
+            i = k
+        if not parts:
+            return StrLit(value="", loc=loc)
+        if len(parts) == 1 and isinstance(parts[0], StrLit):
+            return parts[0]
+        return InterpolatedStr(parts=parts, loc=loc)
 
 
 class _ContPipe:

@@ -17,6 +17,27 @@ def val(src: str):
     return result
 
 
+def unwrap(src: str):
+    """Run and return rows (Context.data), plain list, or scalar."""
+    from peppermint.context import Context
+    result = run(src)
+    if isinstance(result, Ok):
+        v = result.value
+        if isinstance(v, Context):
+            return v.data
+        return v
+    return result
+
+
+def ctx(src: str):
+    """Run and return the full Context for artifact/error assertions."""
+    from peppermint.context import Context
+    result = run(src)
+    if isinstance(result, Ok) and isinstance(result.value, Context):
+        return result.value
+    return result
+
+
 # --- Literals ---
 
 def test_int():         assert val("42") == 42
@@ -160,40 +181,34 @@ def test_pipe_err_short_circuits():
 # --- collapse ---
 
 def test_collapse_sum():
-    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> collapse(total: sum(col.v))')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 1 }, { v: 2 }, { v: 3 }] |> collapse(total: sum(col.v))')
     assert result[0]["total"] == 6
 
 def test_collapse_mean():
-    result = val('[{ v: 10 }, { v: 20 }] |> collapse(avg: mean(col.v))')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 10 }, { v: 20 }] |> collapse(avg: mean(col.v))')
     assert result[0]["avg"] == pytest.approx(15.0)
 
 def test_collapse_count():
-    result = val('[{ x: 1 }, { x: 2 }, { x: 3 }] |> collapse(n: count())')
-    assert isinstance(result, list)
+    result = unwrap('[{ x: 1 }, { x: 2 }, { x: 3 }] |> collapse(n: count())')
     assert result[0]["n"] == 3
 
 def test_collapse_min():
-    result = val('[{ v: 5 }, { v: 2 }, { v: 8 }] |> collapse(lo: min(col.v))')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 5 }, { v: 2 }, { v: 8 }] |> collapse(lo: min(col.v))')
     assert result[0]["lo"] == 2
 
 def test_collapse_max():
-    result = val('[{ v: 5 }, { v: 2 }, { v: 8 }] |> collapse(hi: max(col.v))')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 5 }, { v: 2 }, { v: 8 }] |> collapse(hi: max(col.v))')
     assert result[0]["hi"] == 8
 
 def test_collapse_multi():
-    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> collapse(total: sum(col.v), n: count(), avg: mean(col.v))')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 1 }, { v: 2 }, { v: 3 }] |> collapse(total: sum(col.v), n: count(), avg: mean(col.v))')
     row = result[0]
     assert row["total"] == 6
     assert row["n"] == 3
     assert row["avg"] == pytest.approx(2.0)
 
 def test_collapse_by():
-    result = val("""
+    result = unwrap("""
 [
   { region: "A", income: 10 },
   { region: "A", income: 20 },
@@ -201,7 +216,6 @@ def test_collapse_by():
 ]
 |> collapse(by: "region", total: sum(col.income), n: count())
 """)
-    assert isinstance(result, list)
     assert len(result) == 2
     by_region = {r["region"]: r for r in result}
     assert by_region["A"]["total"] == 30
@@ -210,8 +224,7 @@ def test_collapse_by():
     assert by_region["B"]["n"] == 1
 
 def test_collapse_by_preserves_key():
-    result = val('[{ cat: "x", v: 1 }, { cat: "x", v: 2 }, { cat: "y", v: 3 }] |> collapse(by: "cat", n: count())')
-    assert isinstance(result, list)
+    result = unwrap('[{ cat: "x", v: 1 }, { cat: "x", v: 2 }, { cat: "y", v: 3 }] |> collapse(by: "cat", n: count())')
     assert all("cat" in r for r in result)
 
 
@@ -224,8 +237,7 @@ def test_col_ref():
     assert result.field == "salary"
 
 def test_add_broadcast_mean():
-    result = val('[{ g: "a", v: 10 }, { g: "a", v: 20 }, { g: "b", v: 30 }] |> add(avg: mean(col.v, by: "g"))')
-    assert isinstance(result, list)
+    result = unwrap('[{ g: "a", v: 10 }, { g: "a", v: 20 }, { g: "b", v: 30 }] |> add(avg: mean(col.v, by: "g"))')
     by_g = {r["g"]: r["avg"] for r in result}
     assert by_g["a"] == pytest.approx(15.0)
     assert by_g["b"] == pytest.approx(30.0)
@@ -238,27 +250,27 @@ def test_take():
     assert result == [1, 2, 3]
 
 def test_take_table():
-    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> take(2)')
+    result = unwrap('[{ v: 1 }, { v: 2 }, { v: 3 }] |> take(2)')
     assert len(result) == 2
 
 
 # --- rank ---
 
 def test_rank_asc():
-    result = val('[{ v: 30 }, { v: 10 }, { v: 20 }] |> add(r: rank(col.v))')
+    result = unwrap('[{ v: 30 }, { v: 10 }, { v: 20 }] |> add(r: rank(col.v))')
     ranks = {row["v"]: row["r"] for row in result}
     assert ranks[10] == 1
     assert ranks[20] == 2
     assert ranks[30] == 3
 
 def test_rank_desc():
-    result = val('[{ v: 30 }, { v: 10 }, { v: 20 }] |> add(r: rank(col.v, dir: "desc"))')
+    result = unwrap('[{ v: 30 }, { v: 10 }, { v: 20 }] |> add(r: rank(col.v, dir: "desc"))')
     ranks = {row["v"]: row["r"] for row in result}
     assert ranks[30] == 1
     assert ranks[10] == 3
 
 def test_rank_by_group():
-    result = val('[{ g: "a", v: 10 }, { g: "a", v: 20 }, { g: "b", v: 5 }, { g: "b", v: 15 }] |> add(r: rank(col.v, by: "g"))')
+    result = unwrap('[{ g: "a", v: 10 }, { g: "a", v: 20 }, { g: "b", v: 5 }, { g: "b", v: 15 }] |> add(r: rank(col.v, by: "g"))')
     by_gv = {(row["g"], row["v"]): row["r"] for row in result}
     assert by_gv[("a", 10)] == 1
     assert by_gv[("a", 20)] == 2
@@ -269,15 +281,11 @@ def test_rank_by_group():
 # --- add concurrent ---
 
 def test_add_concurrent_produces_correct_values():
-    result = val('[{ v: 1 }, { v: 2 }, { v: 3 }] |> add(doubled: it.v * 2, concurrent: 4)')
-    assert isinstance(result, list)
+    result = unwrap('[{ v: 1 }, { v: 2 }, { v: 3 }] |> add(doubled: it.v * 2)\n    @concurrent(4)')
     assert [r["doubled"] for r in result] == [2, 4, 6]
 
 def test_add_concurrent_preserves_order():
-    import time
-    # Each row sleeps proportional to its index in reverse — if order isn't preserved,
-    # results would come back sorted by completion time
-    result = val('[{ i: 3 }, { i: 2 }, { i: 1 }] |> add(v: it.i, concurrent: 3)')
+    result = unwrap('[{ i: 3 }, { i: 2 }, { i: 1 }] |> add(v: it.i)\n    @concurrent(3)')
     assert [r["i"] for r in result] == [3, 2, 1]
 
 # --- Ok / Err propagation ---
@@ -390,7 +398,7 @@ index_in(["x", "y", "z"])("x")
 # --- each ---
 
 def test_each_collapse():
-    result = val("""
+    result = unwrap("""
 [
   { region: "A", v: 10 },
   { region: "A", v: 20 },
@@ -398,7 +406,6 @@ def test_each_collapse():
 ]
 |> each(by: "region", |> collapse(total: sum(col.v), n: count()))
 """)
-    assert isinstance(result, list)
     assert len(result) == 2
     by_region = {r["region"]: r for r in result}
     assert by_region["A"]["total"] == 30
@@ -407,7 +414,7 @@ def test_each_collapse():
     assert by_region["B"]["n"] == 1
 
 def test_each_multi_step():
-    result = val("""
+    result = unwrap("""
 [
   { g: "x", v: 3 },
   { g: "x", v: 1 },
@@ -420,14 +427,13 @@ def test_each_multi_step():
     |> filter(it.rank <= 2)
 )
 """)
-    assert isinstance(result, list)
     assert len(result) == 4
     x_rows = sorted([r for r in result if r["g"] == "x"], key=lambda r: r["rank"])
     assert x_rows[0]["v"] == 3
     assert x_rows[1]["v"] == 2
 
 def test_each_preserves_group_key():
-    result = val("""
+    result = unwrap("""
 [{ cat: "a", v: 1 }, { cat: "b", v: 2 }]
 |> each(by: "cat", |> collapse(n: count()))
 """)
@@ -437,39 +443,37 @@ def test_each_preserves_group_key():
 # --- collapse with lambda ---
 
 def test_collapse_lambda():
-    result = val("""
+    result = unwrap("""
 [{ g: "a", v: 1 }, { g: "a", v: 2 }, { g: "b", v: 3 }]
-|> collapse(by: "g", total: rows -> rows |> collapse(s: sum(col.v)) |> get(0))
+|> collapse(by: "g", total: rows -> rows |> collapse(s: sum(col.v)))
 """)
-    assert isinstance(result, list)
-    by_g = {r["g"]: r["total"]["s"] for r in result}
+    by_g = {r["g"]: r["total"][0]["s"] for r in result}
     assert by_g["a"] == 3
     assert by_g["b"] == 3
 
 
 def test_collapse_lambda_no_by():
-    result = val("""
+    result = unwrap("""
 [{ v: 1 }, { v: 2 }, { v: 3 }]
-|> collapse(total: rows -> rows |> collapse(s: sum(col.v)) |> get(0))
+|> collapse(total: rows -> rows |> collapse(s: sum(col.v)))
 """)
-    assert result[0]["total"]["s"] == 6
+    assert result[0]["total"][0]["s"] == 6
 
 
 # --- mean/sum on vector columns ---
 
 def test_collapse_mean_vector():
-    result = val("""
+    result = unwrap("""
 [{ g: "a", vec: [1.0, 2.0] }, { g: "a", vec: [3.0, 4.0] }, { g: "b", vec: [10.0, 20.0] }]
 |> collapse(by: "g", centroid: mean(col.vec))
 """)
-    assert isinstance(result, list)
     by_g = {r["g"]: r["centroid"] for r in result}
     assert by_g["a"] == [2.0, 3.0]
     assert by_g["b"] == [10.0, 20.0]
 
 
 def test_collapse_sum_vector():
-    result = val("""
+    result = unwrap("""
 [{ vec: [1.0, 2.0] }, { vec: [3.0, 4.0] }]
 |> collapse(total: sum(col.vec))
 """)
@@ -479,7 +483,7 @@ def test_collapse_sum_vector():
 # --- join + centroid pattern ---
 
 def test_join_centroid_pattern():
-    result = val("""
+    result = unwrap("""
 data = [
     { g: "a", v: 1.0 },
     { g: "a", v: 3.0 },
@@ -488,7 +492,6 @@ data = [
 centroids = data |> collapse(by: "g", centroid: mean(col.v))
 data |> join(centroids, on: "g")
 """)
-    assert isinstance(result, list)
     assert len(result) == 3
     assert all("centroid" in r for r in result)
     a_rows = [r for r in result if r["g"] == "a"]
@@ -519,6 +522,44 @@ def test_text_parse_dict():
     assert result == {"a": 1}
 
 
+# --- String interpolation ---
+
+def test_interpolation_simple():
+    assert val('x = 5\n"{x}"') == "5"
+
+def test_interpolation_expression():
+    assert val('x = 3\n"{x * 2} items"') == "6 items"
+
+def test_interpolation_multiple():
+    assert val('a = 1\nb = 2\n"{a} and {b}"') == "1 and 2"
+
+def test_interpolation_none():
+    assert val('x = none\n"{x}"') == ""
+
+def test_interpolation_in_add():
+    result = unwrap('[{ a: 1, b: "x" }, { a: 2, b: "y" }] |> add(label: "{it.a}_{it.b}")')
+    assert result[0]["label"] == "1_x"
+    assert result[1]["label"] == "2_y"
+
+def test_interpolation_nested_expr():
+    assert val('xs = [1, 2, 3]\n"len is {len(xs)}"') == "len is 3"
+
+def test_no_interpolation_in_json_string():
+    # {"a": 1} should not be treated as interpolation — falls back to literal
+    result = val('use text\ntext.parse("{\\"a\\": 1}")')
+    assert result == {"a": 1}
+
+def test_interpolation_mixed_with_literal_braces():
+    # {x} interpolates, { key: val } stays as literal text
+    result = val('x = "world"\n"hello {x} JSON: { key: val }"')
+    assert result == "hello world JSON: { key: val }"
+
+def test_interpolation_partial_failure_doesnt_kill_whole_string():
+    # One valid {expr} and one invalid {key: val} — valid one still interpolates
+    result = val('name = "alice"\n"hi {name} data: { x: 1 }"')
+    assert result == "hi alice data: { x: 1 }"
+
+
 # --- model shorthand resolves correctly ---
 
 def test_resolve_model_load():
@@ -546,3 +587,264 @@ def test_resolve_model_explicit():
     load_path, save_path = _resolve_model(None, "save.pkl", "load.pkl")
     assert load_path == "load.pkl"
     assert save_path == "save.pkl"
+
+
+# --- Context artifacts ---
+
+def test_context_artifacts_preserved_through_pipe():
+    from peppermint.context import Context
+    result = ctx("""
+[{ v: 1 }, { v: 2 }]
+|> add(x: it.v * 2)
+|> filter(it.x > 2)
+""")
+    assert isinstance(result, Context)
+    assert result.artifacts == {}
+    assert len(result.data) == 1
+    assert result.data[0]["x"] == 4
+
+
+def test_context_data_field_access():
+    result = unwrap("""
+data = [{ v: 1 }, { v: 2 }, { v: 3 }]
+    |> filter(it.v > 1)
+data.data
+""")
+    assert len(result) == 2
+
+
+def test_context_errors_field_access():
+    result = val("""
+data = [{ v: 1 }, { v: 2 }]
+    |> filter(it.v > 1)
+data.errors
+""")
+    assert result == []
+
+
+def test_llm_format_json_strips_fences():
+    import unittest.mock as mock
+    from peppermint.libs.ml import llm as _llm
+    fake_resp = mock.MagicMock()
+    fake_resp.choices[0].message.content = '```json\n{"a": 1}\n```'
+    with mock.patch("peppermint.libs.ml._client_cache", {}):
+        with mock.patch("openai.OpenAI") as MockClient:
+            MockClient.return_value.chat.completions.create.return_value = fake_resp
+            result = _llm("test", source="openai", model="gpt-4", apikey="x", format="json")
+    assert result == {"a": 1}
+
+
+def test_llm_format_json_plain():
+    import unittest.mock as mock
+    from peppermint.libs.ml import llm as _llm
+    fake_resp = mock.MagicMock()
+    fake_resp.choices[0].message.content = '{"b": 2}'
+    with mock.patch("peppermint.libs.ml._client_cache", {}):
+        with mock.patch("openai.OpenAI") as MockClient:
+            MockClient.return_value.chat.completions.create.return_value = fake_resp
+            result = _llm("test", source="openai", model="gpt-4", apikey="x", format="json")
+    assert result == {"b": 2}
+
+
+# --- env.KEY ---
+
+def test_env_key_access(monkeypatch):
+    monkeypatch.setenv("TEST_PEP_KEY", "hello")
+    result = val('use env\nenv.TEST_PEP_KEY')
+    assert result == "hello"
+
+
+def test_env_key_missing_returns_err(monkeypatch):
+    monkeypatch.delenv("NONEXISTENT_PEP_KEY_XYZ", raising=False)
+    result = val('use env\nenv.NONEXISTENT_PEP_KEY_XYZ')
+    from peppermint.interpreter import Err
+    assert isinstance(result, Err)
+
+
+def test_env_get_still_works(monkeypatch):
+    monkeypatch.setenv("TEST_PEP_KEY2", "world")
+    result = val('use env\nenv.get("TEST_PEP_KEY2")')
+    assert result == "world"
+
+
+def test_env_key_in_interpolation(monkeypatch):
+    monkeypatch.setenv("MY_NAME", "peppermint")
+    result = val('use env\n"hello {env.MY_NAME}"')
+    assert result == "hello peppermint"
+
+
+# --- Annotations ---
+
+def test_concurrent_annotation_correct_results():
+    result = unwrap('[{ v: 1 }, { v: 2 }, { v: 3 }] |> add(x: it.v * 2)\n    @concurrent(3)')
+    assert sorted(r["x"] for r in result) == [2, 4, 6]
+
+
+def test_concurrent_annotation_preserves_order():
+    result = unwrap('[{ i: 1 }, { i: 2 }, { i: 3 }] |> add(x: it.i)\n    @concurrent(3)')
+    assert [r["i"] for r in result] == [1, 2, 3]
+
+
+def test_retry_annotation_succeeds_on_first():
+    result = unwrap('[{ v: 1 }] |> add(x: it.v + 1)\n    @retry(3)')
+    assert result[0]["x"] == 2
+
+
+def test_until_annotation_retries_until_condition():
+    result = unwrap("""
+data = [{ n: 0 }, { n: 1 }, { n: 5 }]
+data |> add(n: it.n + 1)
+    @until(it.n >= 3, max: 5)
+""")
+    ns = sorted(r["n"] for r in result)
+    # n=0 → 1 → 2 → 3 (passes), n=1 → 2 → 3 (passes), n=5+1=6 already >=3
+    assert ns == [3, 3, 6]
+
+
+def test_until_exhausted_rows_go_to_errors():
+    result = ctx("""
+data = [{ n: 0 }]
+data |> add(n: it.n + 1)
+    @until(it.n >= 10, max: 3)
+""")
+    from peppermint.context import Context
+    assert isinstance(result, Context)
+    assert len(result.data) == 0
+    assert len(result.errors) == 1
+
+
+def test_annotation_parsing():
+    from peppermint.parser import parse
+    from peppermint.ast_nodes import PipeStep
+    prog = parse('[{v:1}] |> add(x: it.v)\n    @concurrent(4)\n    @retry(2)\n')
+    pipe = prog.body[0]
+    step = pipe.steps[1]
+    assert isinstance(step, PipeStep)
+    names = [a["name"] for a in step.annotations]
+    assert "concurrent" in names
+    assert "retry" in names
+
+
+# --- table[key] indexed lookup ---
+
+def test_list_index_positional():
+    assert val('[10, 20, 30][1]') == 20
+
+def test_list_dict_index_positional():
+    result = val('[{ v: 10 }, { v: 20 }, { v: 30 }][1]')
+    assert result == {"v": 20}
+
+def test_find_by_col():
+    result = val("""
+stats = [{ cluster: 0, n: 10 }, { cluster: 1, n: 20 }]
+find(stats, "cluster", 1)
+""")
+    assert result == {"cluster": 1, "n": 20}
+
+def test_find_missing_returns_none():
+    result = val("""
+stats = [{ cluster: 0, n: 10 }]
+find(stats, "cluster", 99)
+""")
+    assert result is None
+
+def test_find_in_add():
+    result = unwrap("""
+stats = [{ cluster: 0, n: 10 }, { cluster: 1, n: 20 }]
+data = [{ id: 0 }, { id: 1 }]
+data |> add(n: find(stats, "cluster", it.id).n)
+""")
+    assert result[0]["n"] == 10
+    assert result[1]["n"] == 20
+
+
+# --- multi add / drop ---
+
+def test_multi_add():
+    result = unwrap('[{ a: 1, b: 2 }] |> add(x: it.a + 1, y: it.b * 3)')
+    assert result[0]["x"] == 2
+    assert result[0]["y"] == 6
+
+def test_multi_add_independent_eval():
+    # x and y are evaluated against the original row, not each other
+    result = unwrap('[{ a: 1 }] |> add(x: it.a + 1, y: it.a + 10)')
+    assert result[0]["x"] == 2
+    assert result[0]["y"] == 11
+
+def test_single_add_still_works():
+    result = unwrap('[{ a: 1 }] |> add(x: it.a * 2)')
+    assert result[0]["x"] == 2
+
+def test_multi_drop():
+    result = unwrap('[{ a: 1, b: 2, c: 3 }] |> drop("a", "c")')
+    assert result[0] == {"b": 2}
+
+def test_single_drop_still_works():
+    result = unwrap('[{ a: 1, b: 2 }] |> drop("a")')
+    assert result[0] == {"b": 2}
+
+
+# --- recover ---
+
+def test_recover_literal_fallback():
+    result = unwrap('[{ v: 1 }, { v: 2 }] |> add(x: it.v * 2) |> recover(x: 0)')
+    assert [r["x"] for r in result] == [2, 4]
+
+
+def test_recover_restores_error_rows():
+    from peppermint.context import Context
+    from peppermint.stdlib.core import recover
+    from peppermint.interpreter import Interpreter, Ok
+    from peppermint.stdlib import build_global_env
+
+    ctx = Context(
+        data=[{"v": 1, "x": 2}],
+        errors=[{"v": 99, "_error": "failed", "_step": "add"}],
+    )
+    env = build_global_env()
+    interp = Interpreter(env, quiet=True)
+
+    result = recover(ctx, _interp=interp, _env=env, x=0)
+    rv = result.value if isinstance(result, Ok) else result
+    assert isinstance(rv, Context)
+    assert len(rv.data) == 2
+    assert len(rv.errors) == 0
+    assert rv.data[1]["x"] == 0
+
+
+def test_recover_expression_fallback():
+    from peppermint.context import Context
+    from peppermint.stdlib.core import recover
+    from peppermint.interpreter import Interpreter, Ok
+    from peppermint.stdlib import build_global_env
+    from peppermint.parser import parse as pparse
+
+    ctx = Context(
+        data=[{"title": "a", "label": "ok"}],
+        errors=[{"title": "fallback_title", "_error": "llm failed", "_step": "add"}],
+    )
+    env = build_global_env()
+    interp = Interpreter(env, quiet=True)
+    expr = pparse("it.title\n").body[0]
+
+    result = recover(ctx, _interp=interp, _env=env, label=expr)
+    rv = result.value if isinstance(result, Ok) else result
+    assert isinstance(rv, Context)
+    assert len(rv.data) == 2
+    assert rv.data[1]["label"] == "fallback_title"
+
+
+def test_add_failure_routes_to_errors():
+    c = ctx('[{ v: 1 }, { v: none }] |> add(x: it.v + 1)')
+    assert len(c.data) == 1
+    assert c.data[0]["x"] == 2
+    assert len(c.errors) == 1
+    assert c.errors[0]["_step"] == "add(x)"
+
+
+def test_add_failure_recover_pattern():
+    result = unwrap('[{ v: 1 }, { v: none }] |> add(x: it.v + 1) |> recover(x: 0)')
+    assert len(result) == 2
+    xs = [r["x"] for r in result]
+    assert xs[0] == 2
+    assert xs[1] == 0
