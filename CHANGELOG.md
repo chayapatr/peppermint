@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.0a3 — 2026-05-29
+
+### Runtime (bug fix)
+
+- **Row cache now propagates through `add`, `map`, `mapi`, `select`, `recover`** — previously, `ml.llm` or `ml.embed` nested inside these functions (e.g. `add(label: ml.llm(...))`) silently skipped row caching. The `_row_cache` handle is now threaded from `eval_call` → function → `make_row_fn` → `eval` → nested `eval_call`, so per-row caching works regardless of nesting depth. `each` was already correct since it runs full sub-pipes through the interpreter.
+- **`eval` accepts `row_cache`** — the top-level `eval` dispatcher now forwards `row_cache` to `eval_call` when encountering a `Call` node, closing the propagation gap for expressions evaluated outside a direct pipe step context.
+- **Step cache skipped when result has row errors** — previously, a step that partially failed (e.g. API quota exceeded mid-run) would write the partial result to step cache, preventing retries on the next run. Now, steps with any rows in `.errors` are not written to step cache. On rerun, successful rows are still served from row cache; only failed rows hit the API again.
+
+### ml
+
+- **`ml.llm(source: "anthropic")`** — Anthropic Claude models now supported. Uses the `anthropic` SDK (included in `peppermint-lang[ml]`). Same interface as `"openai"` and `"deepinfra"`.
+- **`ml.llm` prints progress** — each uncached call prints `HH:MM:SS [llm] <model>` to stdout; each row cache hit prints `HH:MM:SS [cache hit]`. Cached hits from step cache are silent (the step summary line already shows `[cached]`).
+
+---
+
 ## 0.4.0a2 — 2026-05-29
 
 ### Language (breaking)

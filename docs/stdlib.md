@@ -142,7 +142,7 @@ val = env.get("OPTIONAL_KEY")
 | Function | Description |
 |---|---|
 | `ml.embed(text, source:, model:, apikey?)` | Embed a single string — use inside `add` with `@concurrent(N)` for batch calls |
-| `ml.llm(prompt, source:, model:, apikey?, format?)` | Single LLM call — use inside `add`. `format: "json"` strips fences and parses response |
+| `ml.llm(prompt, source:, model:, apikey?, format?)` | Single LLM call — use inside `add`. `source:` `"openai"`, `"anthropic"`, or `"deepinfra"`. `format: "json"` strips fences and parses response |
 | `ml.kmeans(k:, on:, out:, method?, model?)` | K-means — `k:` accepts a range for auto-select; `method:` `"silhouette"` (default) or `"elbow"`; writes `.kmeans` artifact |
 | `ml.umap(dims:, on:, out:, neighbors?, min_dist?, metric?, model?)` | Dimensionality reduction — writes `.umap` artifact |
 | `ml.ols(on:, out:, model?)` | OLS regression — adds predicted and residual columns; writes `.ols` artifact |

@@ -292,17 +292,28 @@ Example: `add(embedding: ml.embed(it.text, source: "deepinfra", model: "...", ap
 
 
 
+def _parse_llm_content(content, format):
+    if format == "json":
+        import json, re
+        cleaned = re.sub(r"^```json\s*|^```\s*|```$", "", content.strip(), flags=re.MULTILINE).strip()
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError:
+            return None  # let @until retry
+    return content
+
+
 @pep_fn_lazy
 @pep_signature("ml.llm(prompt: str, source: str, model: str, apikey?: str, format?: str) -> str | Any")
 def llm(prompt, source=None, model=None, apikey=None, format=None, _row_cache=None, **_):
     """Run a single LLM call. Use inside `add`.
 
-`source`: `"deepinfra"` or `"openai"`.
-`model`: model name (e.g. `"meta-llama/Llama-3.3-70B-Instruct"`).
-`apikey`: required for `"deepinfra"` and `"openai"`.
-`format`: `"json"` — strips markdown fences, parses response as JSON, raises on parse failure."""
+`source`: `"deepinfra"`, `"openai"`, or `"anthropic"`.
+`model`: model name (e.g. `"meta-llama/Llama-3.3-70B-Instruct"` or `"claude-opus-4-8"`).
+`apikey`: required for all sources.
+`format`: `"json"` — strips markdown fences, parses response as JSON, returns none on parse failure."""
     if source is None:
-        raise ValueError("llm: source is required (e.g. source: \"deepinfra\" or source: \"openai\")")
+        raise ValueError("llm: source is required (e.g. source: \"openai\", \"anthropic\", or \"deepinfra\")")
     if model is None:
         raise ValueError("llm: model is required")
 
@@ -311,7 +322,12 @@ def llm(prompt, source=None, model=None, apikey=None, format=None, _row_cache=No
         rk = cache_key_for_row({"prompt": prompt}, f"ml.llm(source={source},model={model},format={format})")
         cached = _row_cache.get_row(rk)
         if cached is not None:
+            from datetime import datetime
+            print(f"  {datetime.now().strftime('%H:%M:%S')} [cache hit]", flush=True)
             return cached
+
+    from datetime import datetime
+    print(f"  {datetime.now().strftime('%H:%M:%S')} [llm] {model}", flush=True)
 
     if source in ("deepinfra", "openai"):
         if apikey is None and source == "deepinfra":
@@ -330,19 +346,23 @@ def llm(prompt, source=None, model=None, apikey=None, format=None, _row_cache=No
             model=model,
             messages=[{"role": "user", "content": prompt}],
         )
-        content = resp.choices[0].message.content
-
-        if format == "json":
-            import json, re
-            cleaned = re.sub(r"^```json\s*|^```\s*|```$", "", content.strip(), flags=re.MULTILINE).strip()
-            try:
-                result = json.loads(cleaned)
-            except json.JSONDecodeError:
-                result = None  # let @until retry
-        else:
-            result = content
+        result = _parse_llm_content(resp.choices[0].message.content, format)
+    elif source == "anthropic":
+        if apikey is None:
+            raise ValueError("llm: apikey is required for source 'anthropic'")
+        import anthropic as anthropic_sdk
+        cache_key = ("anthropic_llm", apikey)
+        if cache_key not in _client_cache:
+            _client_cache[cache_key] = anthropic_sdk.Anthropic(api_key=apikey)
+        client = _client_cache[cache_key]
+        resp = client.messages.create(
+            model=model,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        result = _parse_llm_content(resp.content[0].text, format)
     else:
-        raise ValueError(f"llm: unknown source '{source}' (use 'deepinfra' or 'openai')")
+        raise ValueError(f"llm: unknown source '{source}' (use 'openai', 'anthropic', or 'deepinfra')")
 
     if _row_cache is not None and result is not None:
         _row_cache.set_row(rk, result)

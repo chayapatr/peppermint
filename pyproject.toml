@@ -19,7 +19,7 @@ classifiers = [
 
 [project.optional-dependencies]
 data = ["pandas"]
-ml = ["pandas", "scikit-learn", "umap-learn", "openai"]
+ml = ["pandas", "scikit-learn", "umap-learn", "openai", "anthropic"]
 viz = ["pandas", "matplotlib", "seaborn"]
 lsp = ["pygls"]
 all = [
@@ -27,6 +27,7 @@ all = [
     "scikit-learn",
     "umap-learn",
     "openai",
+    "anthropic",
     "matplotlib",
     "seaborn",
     "pygls",

@@ -113,31 +113,31 @@ def filter_(data, pred, _interp=None, _env=None, **_) -> list:
 
 
 @pep_signature("map(expr: Expr) -> List<Any>")
-def map_(data, transform, _interp=None, _env=None, **_) -> list:
+def map_(data, transform, _interp=None, _env=None, _row_cache=None, **_) -> list:
     """Transform every element. `it` refers to the current element. Use `@concurrent(N)` for parallel execution."""
     items = _to_list(data)
-    fn = _interp.make_row_fn(transform, _env)
+    fn = _interp.make_row_fn(transform, _env, row_cache=_row_cache)
     return [_unwrap(fn(item)) for item in items]
 
 
 @pep_signature("mapi(expr: Expr) -> List<Any>")
-def mapi(data, transform, _interp=None, _env=None, **_) -> list:
+def mapi(data, transform, _interp=None, _env=None, _row_cache=None, **_) -> list:
     """Map with index. `it` is `{ idx: Int, val: Any }`. Use `@concurrent(N)` for parallel execution."""
     items = _to_list(data)
-    fn = _interp.make_row_fn(transform, _env)
+    fn = _interp.make_row_fn(transform, _env, row_cache=_row_cache)
     indexed = [{"idx": i, "val": x} for i, x in enumerate(items)]
     return [_unwrap(fn(item)) for item in indexed]
 
 
 @pep_signature("add(field: Expr, ...) -> List<Row>")
-def add(data, _interp=None, _env=None, **kwargs) -> list:
+def add(data, _interp=None, _env=None, _row_cache=None, **kwargs) -> list:
     """Add one or more fields to every row. Use `it.field` or `col.field` expressions.
 Multiple fields are evaluated independently against the original row — field B cannot reference field A from the same `add` call.
 Use `@concurrent(N)` and `@retry(N)` annotations for parallel/retry execution.
 If the expression fails for a row, that row moves to `.errors` (with `_error` and `_step`). Use `recover()` to handle failures."""
     from ..context import Context
 
-    non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth")}
+    non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth", "_row_cache")}
     if not non_meta:
         raise ValueError("add() requires at least one keyword argument: the new field name(s)")
 
@@ -155,7 +155,7 @@ If the expression fails for a row, that row moves to `.errors` (with `_error` an
             rows = out.to_dict(orient="records")
             continue
 
-        fn = _interp.make_row_fn(expr, _env)
+        fn = _interp.make_row_fn(expr, _env, row_cache=_row_cache)
         good = []
         bad = []
 
@@ -198,10 +198,10 @@ def drop(data, *fields, _interp=None, _env=None, **_) -> list:
 
 
 @pep_signature("select(fields: str..., renamed?: Expr) -> List<Row>")
-def select(data, *fields, _interp=None, _env=None, **kwargs) -> list:
+def select(data, *fields, _interp=None, _env=None, _row_cache=None, **kwargs) -> list:
     """Keep only the specified fields. Keyword args compute or rename: `select("a", b: it.x + 1)`."""
     fields = [_eval_arg(f, _interp, _env) for f in fields]
-    non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth")}
+    non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth", "_row_cache")}
     ctx = _as_ctx(data)
     rows = ctx.data if ctx is not None else _to_list(data)
 
@@ -214,7 +214,7 @@ def select(data, *fields, _interp=None, _env=None, **kwargs) -> list:
         new_row = {f: row[f] for f in fields if f in row}
         failed = None
         for field, expr in non_meta.items():
-            fn = _interp.make_row_fn(expr, _env)
+            fn = _interp.make_row_fn(expr, _env, row_cache=_row_cache)
             try:
                 result = _unwrap(fn(row))
                 if isinstance(result, Err):
@@ -380,7 +380,7 @@ def halt(message=None, _interp=None, _env=None, **_):
 
 
 @pep_signature("recover(field: Expr) -> List<Row>")
-def recover(data, _interp=None, _env=None, **kwargs):
+def recover(data, _interp=None, _env=None, _row_cache=None, **kwargs):
     """Move error rows back into data using a fallback expression.
 
 Applies to all rows currently in `.errors`. For each error row, evaluates
@@ -394,12 +394,12 @@ Example: `|> add(label: ml.llm(...)) |> recover(label: it.title)`"""
     if ctx is None or not ctx.errors:
         return data
 
-    non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth")}
+    non_meta = {k: v for k, v in kwargs.items() if k not in ("_interp", "_env", "_block", "_depth", "_row_cache")}
     if not non_meta:
         raise ValueError("recover() requires exactly one keyword argument: the field name")
 
     field, expr = next(iter(non_meta.items()))
-    fn = _interp.make_row_fn(expr, _env)
+    fn = _interp.make_row_fn(expr, _env, row_cache=_row_cache)
 
     recovered = []
     still_failing = []

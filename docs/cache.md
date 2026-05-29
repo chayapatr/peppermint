@@ -85,6 +85,8 @@ This means you can append new rows and rerun — existing rows are free, only ne
     @cache
 ```
 
+Row cache works regardless of how `ml.llm` or `ml.embed` is nested — inside `add`, `map`, `select`, or `recover`. The cache handle is propagated through all stdlib functions that evaluate per-row expressions.
+
 Row cache is stored in `.peppermint/row_cache/`.
 
 ---

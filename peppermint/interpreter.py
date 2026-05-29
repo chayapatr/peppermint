@@ -116,7 +116,7 @@ class Interpreter:
             result = self.eval(node, self.env)
         return result
 
-    def eval(self, node, env: Env) -> Any:
+    def eval(self, node, env: Env, row_cache=None) -> Any:
         match node:
             case IntLit(value=v):       return v
             case FloatLit(value=v):     return v
@@ -132,7 +132,7 @@ class Interpreter:
             case FieldAccess():         return self.eval_field(node, env)
             case Neg():                 return -self.eval(node.operand, env)
             case BinOp():               return self.eval_binop(node, env)
-            case Call():                return self.eval_call(node, None, env)
+            case Call():                return self.eval_call(node, None, env, row_cache=row_cache)
             case Pipe():                return self.eval_pipe(node, env)
             case Block():               return self.eval_block(node, env)
             case Match():               return self.eval_match(node, env)
@@ -361,9 +361,11 @@ class Interpreter:
                 step_result = self._eval_step_with_annotations(expr, value, env, depth, step.annotations, step_cache=step_cache)
                 result = step_result if isinstance(step_result, (Ok, Err)) else Ok(step_result)
 
-                # Cache write
+                # Cache write — skip if result has row errors (allow retry on next run)
                 if ck and isinstance(result, Ok):
-                    step_cache.set_step(ck, result.value)
+                    from .context import Context as _Ctx
+                    if not (isinstance(result.value, _Ctx) and result.value.errors):
+                        step_cache.set_step(ck, result.value)
 
             except PepError as e:
                 step_name = self._call_name(step.expr)
@@ -591,6 +593,9 @@ class Interpreter:
                 extra = {"_block": node.block, "_env": env, "_interp": self, "_depth": depth}
             if row_cache and fn_name in _VOLATILE:
                 extra["_row_cache"] = row_cache
+            # Pass row_cache to any stdlib function that uses make_row_fn internally
+            if row_cache and extra and fn_name not in _VOLATILE:
+                extra["_row_cache"] = row_cache
             result = fn(*args, **kwargs, **extra) if extra else fn(*args, **kwargs)
             # Unwrap nested Ok(Ok(...))
             while isinstance(result, Ok) and isinstance(result.value, Ok):
@@ -734,7 +739,7 @@ class Interpreter:
 
     # --- it injection ---
 
-    def make_row_fn(self, expr_node, env: Env):
+    def make_row_fn(self, expr_node, env: Env, row_cache=None):
         """Wrap an expression that may use 'it' into a callable row -> value."""
         if isinstance(expr_node, Lambda):
             fn = PmFunction(expr_node.params, expr_node.body, env)
@@ -744,5 +749,5 @@ class Interpreter:
         else:
             def eval_with_it(row):
                 row_env = env.extend({"it": row})
-                return self.eval(expr_node, row_env)
+                return self.eval(expr_node, row_env, row_cache=row_cache)
             return eval_with_it

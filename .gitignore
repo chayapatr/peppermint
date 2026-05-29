@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+.pytest_cache
 *.pyc
 *.egg-info/
 
@@ -11,4 +12,5 @@ vscode-peppermint/node_modules/
 dump/
 .env
 
+# Build
 dist/
