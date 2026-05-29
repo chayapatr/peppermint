@@ -117,7 +117,7 @@ def test_step_cache_skips_execution(tmp_path):
 
     core.filter_ = counting_filter
 
-    src = '[{ a: 1 }, { a: 2 }, { a: 3 }] |> filter(it.a > 1)'
+    src = '[{ a: 1 }, { a: 2 }, { a: 3 }] |> filter(it.a > 1)\n    @cache'
     pep_path = str(tmp_path / "test.pep")
     cache = Cache(pep_path)
 

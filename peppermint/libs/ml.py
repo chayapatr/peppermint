@@ -344,7 +344,7 @@ def llm(prompt, source=None, model=None, apikey=None, format=None, _row_cache=No
     else:
         raise ValueError(f"llm: unknown source '{source}' (use 'deepinfra' or 'openai')")
 
-    if _row_cache is not None:
+    if _row_cache is not None and result is not None:
         _row_cache.set_row(rk, result)
     return result
 

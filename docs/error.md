@@ -32,7 +32,7 @@ match(result,
 
 ## Row-level errors
 
-When `add(field: expr)` fails on a specific row — the expression throws, or returns `Err` — that row is moved to `ctx.errors`. The other rows continue through the pipe unaffected.
+When `add(field: expr)` fails on a specific row — the expression throws, or returns `Err` — that row is moved to `.errors`. The other rows continue through the pipe unaffected.
 
 ```
 load("posts.csv")

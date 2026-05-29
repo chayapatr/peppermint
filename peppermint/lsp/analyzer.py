@@ -26,7 +26,7 @@ class AnalysisResult:
     undefined_refs: list[tuple[str, Loc]] = field(default_factory=list)
 
 
-_ANNOTATION_NAMES = frozenset({"concurrent", "retry", "until", "stable"})
+_ANNOTATION_NAMES = frozenset({"concurrent", "retry", "until", "stable", "cache"})
 
 
 def _build_always_in_scope() -> frozenset[str]:

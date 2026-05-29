@@ -91,6 +91,32 @@ load("sales.csv")
 </details>
 
 <details>
+<summary>LLM enrichment with retry and caching</summary>
+
+```
+use ml
+use env
+
+load("posts.csv")
+  |> add(label: ml.llm(it.text,
+      source: "openai", model: "gpt-4o",
+      apikey: env.OPENAI_API_KEY, format: "json"))
+      @concurrent(10)
+      @retry(3)
+      @until(it.label != none, max: 5)
+      @cache
+
+match(len(result.errors),
+  == 0: result.data |> save("output.csv"),
+  _:    halt("rerun to retry {len(result.errors)} failed rows")
+)
+```
+
+`@cache` on `ml.llm` caches each row by content hash. Failed rows are never cached, so rerunning retries them automatically.
+
+</details>
+
+<details>
 <summary>Error handling</summary>
 
 ```

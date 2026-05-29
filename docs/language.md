@@ -460,17 +460,42 @@ Combine with `@retry`:
     @until(it.label != none, max: 5)
 ```
 
+### `@cache`
+
+Cache this step's result across runs. Works differently depending on the step shape:
+
+- Whole-dataframe steps (`ml.kmeans`, `ml.umap`, `each`): caches the full output by input fingerprint
+- Per-row steps (`ml.llm`, `ml.embed`): caches each row independently; failed rows are never cached and are retried on the next run
+
+```
+|> ml.kmeans(k: 5..12, on: "embedding", out: "cluster")
+    @cache
+
+|> add(label: ml.llm(...))
+    @retry(3)
+    @until(it.label != none, max: 5)
+    @cache
+```
+
 ---
 
 ## Caching
 
-Pass `--cache` to enable step caching. Results are stored in `.peppermint/cache/` next to the `.pep` file. On rerun, unchanged steps are skipped:
+Add `@cache` to any pipe step to cache its result across runs:
 
 ```
-pep pipeline.pep --cache
+load("data.csv")
+  |> ml.kmeans(k: 5..12, on: "embedding", out: "cluster")
+      @cache
+  |> add(label: ml.llm(it.text, ...))
+      @retry(3)
+      @until(it.label != none, max: 5)
+      @cache
 ```
 
-`ml.embed` and `ml.llm` use row-level caching — each row's result is cached independently, so adding new rows only processes the new ones.
+For whole-dataframe steps (`ml.kmeans`, `ml.umap`), the entire output is cached by input fingerprint — unchanged input means the step is skipped. For per-row steps (`ml.llm`, `ml.embed`), each row is cached independently by content hash. Failed rows are never cached, so they are retried on the next run automatically.
+
+See [cache.md](cache.md) for the full reference.
 
 ---
 

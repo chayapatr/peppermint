@@ -106,13 +106,15 @@ def run_file(args):
 
     env = build_global_env()
 
-    # CLI flags take precedence over frontmatter
-    use_cache = args.cache or config.get("cache", False)
     cache_dir = config.get("cache_dir", None)
     quiet = args.quiet or config.get("quiet", False)
 
+    # Create cache store if @cache annotations are present, --cache flag set, or frontmatter cache: true
+    def _has_cache_annotation(src: str) -> bool:
+        return "@cache" in src
+
     cache = None
-    if use_cache:
+    if args.cache or config.get("cache", False) or _has_cache_annotation(src):
         from .cache import Cache
         cache = Cache(args.file, cache_dir=cache_dir)
     interp = Interpreter(env, quiet=quiet, cache=cache)

@@ -340,13 +340,14 @@ class Interpreter:
                 if isinstance(expr, (Ident, FieldAccess)):
                     expr = Call(func=expr, args=[], kwargs={}, block=None, loc=expr.loc)
 
-                # Cache check
+                # Cache check — only for steps with @cache annotation
+                step_cache = self._cache if self._cache and any(a["name"] == "cache" for a in step.annotations) else None
                 ck = None
-                if self._cache:
+                if step_cache:
                     from .cache import cache_key_for_step
                     step_src = repr(step.expr) + repr(step.annotations)
                     ck = cache_key_for_step(step_src, value)
-                    cached = self._cache.get_step(ck)
+                    cached = step_cache.get_step(ck)
                     if cached is not None:
                         result = Ok(cached)
                         after = cached
@@ -357,12 +358,12 @@ class Interpreter:
                             self._print_step(step.expr, before, after_list, depth=depth, cached=True, errors_before=errors_before, errors_after=errors_after)
                         continue
 
-                step_result = self._eval_step_with_annotations(expr, value, env, depth, step.annotations)
+                step_result = self._eval_step_with_annotations(expr, value, env, depth, step.annotations, step_cache=step_cache)
                 result = step_result if isinstance(step_result, (Ok, Err)) else Ok(step_result)
 
                 # Cache write
                 if ck and isinstance(result, Ok):
-                    self._cache.set_step(ck, result.value)
+                    step_cache.set_step(ck, result.value)
 
             except PepError as e:
                 step_name = self._call_name(step.expr)
@@ -426,8 +427,8 @@ class Interpreter:
             return arg
         return self.eval(arg, env)
 
-    def _eval_step_with_annotations(self, expr, value, env, depth, annotations):
-        """Execute a pipe step, applying @concurrent, @retry, @until annotations."""
+    def _eval_step_with_annotations(self, expr, value, env, depth, annotations, step_cache=None):
+        """Execute a pipe step, applying @concurrent, @retry, @until, @cache annotations."""
         from .context import Context
 
         # Extract annotation values
@@ -451,7 +452,7 @@ class Interpreter:
                         until_cond = a
 
         def _run_once(input_value):
-            return self.eval_call(expr, input_value, env, depth=depth)
+            return self.eval_call(expr, input_value, env, depth=depth, row_cache=step_cache)
 
         def _run_with_retry(input_value):
             last_err = None
@@ -538,7 +539,7 @@ class Interpreter:
 
     # --- Call ---
 
-    def eval_call(self, node: Call, pipe_value: Any, env: Env, tail: bool = False, depth: int = 0) -> Any:
+    def eval_call(self, node: Call, pipe_value: Any, env: Env, tail: bool = False, depth: int = 0, row_cache=None) -> Any:
         # Resolve the callable
         if isinstance(node.func, FieldAccess):
             ns = self.eval(node.func.obj, env)
@@ -588,8 +589,8 @@ class Interpreter:
             extra = {}
             if _check_accepts_interp(fn):
                 extra = {"_block": node.block, "_env": env, "_interp": self, "_depth": depth}
-            if self._cache and fn_name in _VOLATILE:
-                extra["_row_cache"] = self._cache
+            if row_cache and fn_name in _VOLATILE:
+                extra["_row_cache"] = row_cache
             result = fn(*args, **kwargs, **extra) if extra else fn(*args, **kwargs)
             # Unwrap nested Ok(Ok(...))
             while isinstance(result, Ok) and isinstance(result.value, Ok):

@@ -370,6 +370,15 @@ def print_(data, _interp=None, _env=None, **_):
     return val
 
 
+@pep_signature("halt(message?: str) -> never")
+def halt(message=None, _interp=None, _env=None, **_):
+    """Stop execution immediately with an optional message."""
+    import sys
+    msg = _eval_arg(message, _interp, _env) if message is not None else "halted"
+    print(f"halt: {msg}", file=sys.stderr)
+    sys.exit(1)
+
+
 @pep_signature("recover(field: Expr) -> List<Row>")
 def recover(data, _interp=None, _env=None, **kwargs):
     """Move error rows back into data using a fallback expression.
@@ -712,6 +721,7 @@ def build_core_env() -> dict:
         "min":      min_,
         "max":      max_,
         "print":   print_,
+        "halt":    halt,
         "recover": recover,
         "get":    get,
         "find":   find,

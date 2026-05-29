@@ -34,6 +34,7 @@
 | `get(list, i)` | Get element at index — always positional |
 | `find(table, col, value)` | Find first row where `col` equals `value` — returns `none` if not found |
 | `print(value)` | Print and pass through |
+| `halt(message?)` | Stop execution immediately with exit code 1 |
 | `str(value)` | Convert to string |
 | `int(value)` | Convert to integer |
 | `float(value)` | Convert to float |
@@ -47,16 +48,24 @@ Use annotations instead of kwargs for execution behavior:
 | `@concurrent(n)` | Run the step over each row using n threads. Works on any step or declaration |
 | `@retry(n)` | Retry the step up to n times on exception |
 | `@until(cond, max: n)` | Retry step or `( )` block on rows where condition is false, up to max rounds. Rows still failing go to `.errors` |
+| `@cache` | Cache this step's result. Step-level for whole-dataframe ops; row-level for `ml.llm` and `ml.embed` |
 
 ```
-# On a step
+# Parallel embed with caching
 |> add(embedding: ml.embed(...))
     @concurrent(50)
+    @cache
 
-# Combined
+# LLM with retry, until, and cache — the full pattern
 |> add(label: ml.llm(...))
+    @concurrent(10)
     @retry(3)
     @until(it.label != none, max: 5)
+    @cache
+
+# Cache a deterministic expensive step
+|> ml.kmeans(k: 5..12, on: "embedding", out: "cluster")
+    @cache
 
 # On a declaration — applies every time it's used
 gpt = ml.llm("classify: {it.title}", source: "openai", model: "gpt-4o", apikey: env.OPENAI_API_KEY)

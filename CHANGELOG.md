@@ -1,6 +1,23 @@
 # Changelog
 
-## 0.4.0a1 — 2026-05-28
+## 0.4.0a2 — 2026-05-29
+
+### Language (breaking)
+
+- **`@cache` is now explicit per-step** — remove `cache: true` from frontmatter; add `@cache` to each step that should be cached. Steps without `@cache` always recompute. `cache_dir:` frontmatter still works for controlling the cache location.
+
+### Language
+
+- **`@cache` annotation** — opt any pipe step into caching. Works alongside `@concurrent`, `@retry`, `@until`. For whole-dataframe steps (`ml.kmeans`, `ml.umap`), caches the full output by input fingerprint. For per-row steps (`ml.llm`, `ml.embed`), caches each row independently — failed rows are never cached and are retried on the next run.
+- **`halt(message?)`** — stop execution with exit code 1. Use with `match(len(result.errors), == 0: ..., _: halt(...))` to enforce 100% success before writing output.
+
+### Runtime
+
+- **Failed rows never cached** — `ml.llm` no longer writes `none` results to row cache. A row that failed is always retried on the next run. Successful rows remain cached.
+
+---
+
+## 0.4.0a1 — 2026-05-29
 
 ### Language (breaking)
 
@@ -20,9 +37,9 @@
 ### Runtime
 
 - **Context** — every table pipe now produces a `Context` carrying `.data`, `.errors`, and `.artifacts`. Access via dotted field: `posts.data`, `posts.errors`, `posts.kmeans`, `posts.umap`, `posts.viz`
-- **Row-level errors** — when `add(field: expr)` or `select(..., field: expr)` fails on a row, that row moves to `ctx.errors` (with `_error` and `_step` metadata) instead of silently setting `None`. Pipe output shows `(N errors)` in yellow. Use `recover()` to pull failed rows back
-- **`--cache` flag** — pass `pep file.pep --cache` to enable step caching. Results stored in `.peppermint/cache/` next to the file; unchanged steps are skipped on rerun. Cache key includes full step expression — steps with same name but different kwargs/block are cached independently
-- **Row-level cache** — `ml.embed` and `ml.llm` cache per-row results in `.peppermint/row_cache/`; only new rows hit the API on rerun
+- **Row-level errors** — when `add(field: expr)` or `select(..., field: expr)` fails on a row, that row moves to `.errors` (with `_error` and `_step` metadata) instead of silently setting `None`. Pipe output shows `(N errors)` in yellow. Use `recover()` to pull failed rows back
+- **`@cache` annotation** — opt individual steps into caching. For whole-dataframe steps (`ml.kmeans`, `ml.umap`), caches the full output by input fingerprint. For per-row steps (`ml.llm`, `ml.embed`), caches each row independently by content hash. Failed rows are never cached — they are retried on the next run. Cache key includes full step expression; steps with same name but different kwargs/block are cached independently
+- **`halt(message?)`** — stop execution immediately with exit code 1. Use with `match` on `.errors` to enforce 100% success before writing output
 
 ### Standard library
 
