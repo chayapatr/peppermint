@@ -66,7 +66,11 @@ def _unwrap(v):
 
 @pep_signature("load(path: str) -> Ok<List<Row>> | Err")
 def load(path, _interp=None, _env=None, **_) -> Ok | Err:
-    """Load a CSV or JSON file as a list of rows."""
+    """Load a CSV, JSON, YAML, or TXT file.
+
+JSON/YAML: if top-level is a list, returns a table; if a dict, returns a single-row table.
+TXT: returns a table with one row per non-empty line: `{ line, index }`.
+CSV: standard tabular load."""
     try:
         from ..context import Context
         path = _eval_arg(path, _interp, _env)
@@ -74,6 +78,15 @@ def load(path, _interp=None, _env=None, **_) -> Ok | Err:
             with open(path) as f:
                 data = json.load(f)
             rows = data if isinstance(data, list) else [data]
+        elif path.endswith(".yaml") or path.endswith(".yml"):
+            import yaml
+            with open(path) as f:
+                data = yaml.safe_load(f)
+            rows = data if isinstance(data, list) else [data]
+        elif path.endswith(".txt"):
+            with open(path) as f:
+                lines = [l.rstrip("\n") for l in f if l.strip()]
+            rows = [{"line": line, "index": i} for i, line in enumerate(lines)]
         else:
             df = pd.read_csv(path)
             rows = df.to_dict(orient="records")
@@ -84,16 +97,28 @@ def load(path, _interp=None, _env=None, **_) -> Ok | Err:
 
 @pep_signature("save(path: str) -> Ok<Context> | Err")
 def save(data, path, _interp=None, _env=None, **_) -> Ok | Err:
-    """Write a list of rows to a CSV or JSON file. Creates directories if they don't exist."""
+    """Write rows to a CSV, JSON, YAML, or TXT file. Creates directories if needed.
+
+TXT: writes one `line` field per row, ignoring other fields."""
     try:
         import os
         path = _eval_arg(path, _interp, _env)
         os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
         rows = _to_list(data)
-        df = pd.DataFrame(rows)
         if path.endswith(".json"):
-            df.to_json(path, orient="records", indent=2)
+            import json as _json
+            with open(path, "w") as f:
+                _json.dump(rows, f, indent=2, default=str)
+        elif path.endswith(".yaml") or path.endswith(".yml"):
+            import yaml
+            with open(path, "w") as f:
+                yaml.dump(rows, f, allow_unicode=True, sort_keys=False)
+        elif path.endswith(".txt"):
+            with open(path, "w") as f:
+                for row in rows:
+                    f.write(str(row.get("line", row)) + "\n")
         else:
+            df = pd.DataFrame(rows)
             df.to_csv(path, index=False)
         return Ok(data)
     except Exception as e:
@@ -347,6 +372,20 @@ Accepts a block `{ |> ... }` or a lambda `x -> x |> ...` as the sub-pipe."""
 
 
 @pep_signature("join(other: List<Row>, on: str) -> List<Row>")
+@pep_signature("cross(field: str, values: List) -> List<Row>")
+def cross(data, field=None, values=None, _interp=None, _env=None, **_):
+    """Duplicate every row once per value in `values`, adding `field` as a new column.
+
+Use to fan out a table across multiple models, conditions, or parameters:
+`|> cross("target_model", ["gpt-4o", "claude-sonnet-4-6"])`"""
+    field = _eval_arg(field, _interp, _env)
+    values = _eval_arg(values, _interp, _env)
+    ctx = _as_ctx(data)
+    rows = ctx.data if ctx is not None else _to_list(data)
+    result = [{**row, field: v} for row in rows for v in values]
+    return ctx.with_data(result) if ctx is not None else result
+
+
 def join(data, other, on=None, _interp=None, _env=None, **_) -> list:
     """Inner join on a shared key field. Rows with no match are dropped."""
     on = _eval_arg(on, _interp, _env)
@@ -714,6 +753,7 @@ def build_core_env() -> dict:
         "reduce": reduce,
         "each":     each,
         "join":     join,
+        "cross":    cross,
         "collapse": collapse,
         "sum":      sum_,
         "mean":     mean_,

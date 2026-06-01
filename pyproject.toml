@@ -10,7 +10,7 @@ readme = "README.md"
 license = "MIT"
 authors = [{ name = "Chayapatr (Pub) Archiwaranguprok", email = "pub@mit.edu" }]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["pyyaml"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",

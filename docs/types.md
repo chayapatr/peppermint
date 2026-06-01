@@ -21,15 +21,17 @@ Scalar = Int | Float | Str | Bool
 ## Pipe `|>`
 
 ```
-(|>) : Result<a> → (a → b) → Result<b>
+(|>) : Result<a> → (a → Result<b>) → Result<b>
 ```
 
-Railway-oriented bind. The pipe manages the `Result` wrapper — pure functions just receive and return plain values. Only IO functions (`load`, `save`) produce `Result` explicitly.
+Monadic bind over `Result`. Steps can return a plain value `b` (implicitly `Ok(b)`), an explicit `Err`, or throw an exception (caught and converted to `Err`). The pipe unwraps, applies, and re-wraps:
 
 ```
-bind(Ok(a),  f) = Ok(f(a))   -- unwrap, apply, re-wrap
-bind(Err(e), f) = Err(e)     -- skip, propagate error
+bind(Ok(a),  f) = f(a)    -- f returns Ok(b) or Err(e)
+bind(Err(e), f) = Err(e)  -- skip, propagate error
 ```
+
+Step authors write plain functions returning plain values — `Ok` wrapping is implicit. Only IO functions (`load`, `save`) return `Result` explicitly.
 
 The source is always lifted into `Ok` on entry:
 
