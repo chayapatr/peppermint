@@ -648,6 +648,20 @@ def set_(data, i, v, _interp=None, _env=None, **_):
     return items
 
 
+@pep_signature("first(list: List<Any>) -> Any")
+def first(data, _interp=None, _env=None, **_):
+    """Return the first element of a list, or none if empty."""
+    rows = _to_list(data)
+    return rows[0] if rows else None
+
+
+@pep_signature("last(list: List<Any>) -> Any")
+def last(data, _interp=None, _env=None, **_):
+    """Return the last element of a list, or none if empty."""
+    rows = _to_list(data)
+    return rows[-1] if rows else None
+
+
 @pep_signature("len(list: List<Any>) -> Int")
 def length(data, _interp=None, _env=None, **_):
     """Number of elements in a list."""
@@ -764,6 +778,8 @@ def build_core_env() -> dict:
         "halt":    halt,
         "recover": recover,
         "get":    get,
+        "first":  first,
+        "last":   last,
         "find":   find,
         "set":    set_,
         "len":    length,
