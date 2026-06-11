@@ -261,6 +261,10 @@ val = env.get("KEY")        # returns Err if not set
 | `join(other, on)`                | Inner join on shared key                           |
 | `recover(field: expr)`           | Move error rows back into data with fallback       |
 | `find(table, col, value)`        | First row where col == value, or none              |
+| `cross(field, values)`           | Duplicate every row once per value — fan out across conditions |
+| `flatten(field)`                 | Explode a list-valued column into one row per element |
+| `first(list)`                    | First element, or none if empty                    |
+| `last(list)`                     | Last element, or none if empty                     |
 | `len(list)`                      | Number of elements                                 |
 | `concat(a, b, ...)`              | Concatenate lists                                  |
 | `slice(list, start, end)`        | Slice (inclusive end)                              |
@@ -330,16 +334,17 @@ Annotations attach execution behavior to a step without changing its logic. They
 |> add(label: ml.llm(...))
     @concurrent(10)
     @retry(3)
-    @until(it.label != none, max: 5)
-    @cache
+    @row_cache
+    @progress
 ```
 
-| Annotation             | Description                                                                    |
-| ---------------------- | ------------------------------------------------------------------------------ |
-| `@concurrent(n)`       | Run over each row using n threads, preserving order                            |
-| `@retry(n)`            | Retry the step on exception up to n times                                      |
-| `@until(cond, max: n)` | Retry rows where cond is false, up to max rounds; failing rows go to `.errors` |
-| `@cache`               | Cache this step's result across runs                                           |
+| Annotation       | Description |
+| ---------------- | ----------- |
+| `@concurrent(n)` | Run over each row using n threads, preserving order |
+| `@retry(n)`      | Retry the step on exception up to n times |
+| `@cache`         | Cache the whole step by input fingerprint — skip entirely on rerun if input unchanged. Use for `ml.kmeans`, `ml.umap` |
+| `@row_cache`     | Cache each row independently by content hash — only uncached rows recompute on rerun; failed rows are never cached. Use for `ml.llm`, `ml.embed` |
+| `@progress`      | Show a live progress bar on stderr as rows complete |
 
 Annotations on a declaration apply every time it's used in a pipe:
 
@@ -347,16 +352,6 @@ Annotations on a declaration apply every time it's used in a pipe:
 gpt = ml.llm("classify: {it.title}", source: "openai", model: "gpt-4o", apikey: env.OPENAI_API_KEY)
   @concurrent(10)
   @retry(3)
-  @cache
-```
-
-`@until` can wrap a multi-step block:
-
-```
-(
-  |> add(label: ml.llm(...))
-  |> add(label: match(it.label, == none: none, _: it.label))
-) @until(it.label != none, max: 5)
 ```
 
 ---
@@ -420,7 +415,6 @@ load("data.csv")
   |> add(label: ml.llm(it.text, source: "openai", model: "gpt-4o", apikey: env.OPENAI_API_KEY, format: "json"))
       @concurrent(10)
       @retry(3)
-      @until(it.label != none, max: 5)
       @cache
 ```
 
@@ -526,8 +520,8 @@ result = load("posts.csv")
       apikey: env.OPENAI_API_KEY, format: "json"))
       @concurrent(10)
       @retry(3)
-      @until(it.label != none, max: 5)
-      @cache
+      @row_cache
+      @progress
 
 match(len(result.errors),
   == 0: result.data |> save("output.csv"),
@@ -557,7 +551,7 @@ result.data
       |> ml.kmeans(k: 2..6, on: "embedding", out: "sub_cluster")
           @cache
       |> add(description: gpt)
-          @until(it.description != none, max: 5)
+          @retry(3)
           @cache
   )
   |> add(label: find(centroids, "cluster", it.cluster).centroid)
@@ -616,7 +610,6 @@ load("data.csv")
 ```
 |> add(label: ml.llm(...))
     @retry(3)
-    @until(it.label != none, max: 5)
 |> recover(label: "unknown")
 ```
 

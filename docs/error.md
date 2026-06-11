@@ -67,23 +67,21 @@ After `recover`, `.errors` is cleared for those rows. If the fallback itself fai
 
 ---
 
-## Combining with `@until` and `@retry`
+## Combining `@retry` with `recover`
 
-`@until` retries rows that don't satisfy a condition and sends persistent failures to `.errors`. `@retry` retries on exception before giving up. Together with `recover`, this gives you the full retry-with-fallback pattern:
+`@retry` retries on exception before giving up, sending persistent failures to `.errors`. Use `recover` to pull them back with a fallback:
 
 ```
 load("posts.csv")
   |> add(label: ml.llm(it.text, source: "openai", model: "gpt-4o", apikey: env.OPENAI_API_KEY, format: "json"))
       @concurrent(10)
       @retry(3)
-      @until(it.label != none, max: 5)
   |> recover(label: none)
 ```
 
 What each annotation does:
 - `@concurrent(10)` — run across 10 threads; each row is independent
 - `@retry(3)` — on exception, retry the row up to 3 times before marking it failed
-- `@until(it.label != none, max: 5)` — after each pass, re-run any row where the condition is still false, up to 5 total rounds; rows that never pass go to `.errors`
 - `recover(label: none)` — pull the failed rows back into data with `label: none`
 
 ---
@@ -95,7 +93,7 @@ Access `.errors` by dotting into the named result:
 ```
 result = load("posts.csv")
   |> add(label: ml.llm(...))
-      @until(it.label != none, max: 5)
+      @retry(3)
 
 result.errors |> print()
 ```
@@ -122,7 +120,6 @@ save(concat(labels.errors, sub_labels.errors), "data/failed.csv")
 | Step throws unexpectedly | Whole pipe becomes `Err` |
 | `add(field: expr)` fails on a row | Row moves to `.errors`, other rows continue |
 | `select(..., field: expr)` fails on a row | Same — row moves to `.errors` |
-| `@until` exhausts retries | Failing rows move to `.errors` |
 | `recover(field: fallback)` | Error rows return to `.data` with fallback applied |
 
 Use `match(result, Ok(data): ..., Err(msg): ...)` to handle whole-pipe failures. Use `recover` to handle per-row failures.

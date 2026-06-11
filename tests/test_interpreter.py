@@ -690,28 +690,6 @@ def test_retry_annotation_succeeds_on_first():
     assert result[0]["x"] == 2
 
 
-def test_until_annotation_retries_until_condition():
-    result = unwrap("""
-data = [{ n: 0 }, { n: 1 }, { n: 5 }]
-data |> add(n: it.n + 1)
-    @until(it.n >= 3, max: 5)
-""")
-    ns = sorted(r["n"] for r in result)
-    # n=0 → 1 → 2 → 3 (passes), n=1 → 2 → 3 (passes), n=5+1=6 already >=3
-    assert ns == [3, 3, 6]
-
-
-def test_until_exhausted_rows_go_to_errors():
-    result = ctx("""
-data = [{ n: 0 }]
-data |> add(n: it.n + 1)
-    @until(it.n >= 10, max: 3)
-""")
-    from peppermint.context import Context
-    assert isinstance(result, Context)
-    assert len(result.data) == 0
-    assert len(result.errors) == 1
-
 
 def test_annotation_parsing():
     from peppermint.parser import parse

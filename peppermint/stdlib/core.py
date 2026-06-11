@@ -34,6 +34,9 @@ def _to_list(data) -> list:
         return data.data
     if isinstance(data, list):
         return data
+    from ..interpreter import PmRange
+    if isinstance(data, PmRange):
+        return list(range(data.start, data.end + 1))
     raise TypeError(f"expected a List, got {type(data).__name__}")
 
 
@@ -380,9 +383,28 @@ Use to fan out a table across multiple models, conditions, or parameters:
 `|> cross("target_model", ["gpt-4o", "claude-sonnet-4-6"])`"""
     field = _eval_arg(field, _interp, _env)
     values = _eval_arg(values, _interp, _env)
+    values = _to_list(values)  # unwrap Context or list
     ctx = _as_ctx(data)
     rows = ctx.data if ctx is not None else _to_list(data)
     result = [{**row, field: v} for row in rows for v in values]
+    return ctx.with_data(result) if ctx is not None else result
+
+
+@pep_signature("flatten(field: str) -> List<Row>")
+def flatten(data, field=None, _interp=None, _env=None, **_):
+    """Explode a list-valued column into one row per element.
+
+Each row is duplicated once per item in `field`, with `field` replaced by the item.
+Other columns are copied through unchanged.
+`|> flatten("scenarios")` turns a column of lists into individual rows."""
+    field = _eval_arg(field, _interp, _env)
+    ctx = _as_ctx(data)
+    rows = ctx.data if ctx is not None else _to_list(data)
+    result = [
+        {**{k: v for k, v in row.items() if k != field}, **(item if isinstance(item, dict) else {"value": item})}
+        for row in rows
+        for item in (row.get(field) or [])
+    ]
     return ctx.with_data(result) if ctx is not None else result
 
 
@@ -768,6 +790,7 @@ def build_core_env() -> dict:
         "each":     each,
         "join":     join,
         "cross":    cross,
+        "flatten":  flatten,
         "collapse": collapse,
         "sum":      sum_,
         "mean":     mean_,

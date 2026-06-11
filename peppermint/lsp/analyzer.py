@@ -26,7 +26,7 @@ class AnalysisResult:
     undefined_refs: list[tuple[str, Loc]] = field(default_factory=list)
 
 
-_ANNOTATION_NAMES = frozenset({"concurrent", "retry", "until", "stable", "cache"})
+_ANNOTATION_NAMES = frozenset({"concurrent", "retry", "stable", "cache", "row_cache", "progress"})
 
 
 def _build_always_in_scope() -> frozenset[str]:
@@ -49,7 +49,13 @@ def _build_always_in_scope() -> frozenset[str]:
     return frozenset(names)
 
 
-_ALWAYS_IN_SCOPE = _build_always_in_scope()
+_ALWAYS_IN_SCOPE: frozenset[str] | None = None
+
+def _get_always_in_scope() -> frozenset[str]:
+    global _ALWAYS_IN_SCOPE
+    if _ALWAYS_IN_SCOPE is None:
+        _ALWAYS_IN_SCOPE = _build_always_in_scope()
+    return _ALWAYS_IN_SCOPE
 
 
 def _build_list_row_fns() -> frozenset[str]:
@@ -63,14 +69,20 @@ def _build_list_row_fns() -> frozenset[str]:
     return frozenset(fns)
 
 
-_LIST_ROW_FNS = _build_list_row_fns()
+_LIST_ROW_FNS: frozenset[str] | None = None
+
+def _get_list_row_fns() -> frozenset[str]:
+    global _LIST_ROW_FNS
+    if _LIST_ROW_FNS is None:
+        _LIST_ROW_FNS = _build_list_row_fns()
+    return _LIST_ROW_FNS
 
 
 def _infer_type(node) -> str:
     if isinstance(node, Call):
         fn = node.func
         name = fn.name if isinstance(fn, Ident) else None
-        if name in _LIST_ROW_FNS:
+        if name in _get_list_row_fns():
             return "List<Row>"
     if isinstance(node, Lambda):
         return "fn"
@@ -80,7 +92,7 @@ def _infer_type(node) -> str:
             expr = getattr(last, "expr", last)
             if isinstance(expr, Call):
                 name = expr.func.name if isinstance(expr.func, Ident) else None
-                if name in _LIST_ROW_FNS:
+                if name in _get_list_row_fns():
                     return "List<Row>"
     return "untyped"
 
@@ -112,7 +124,7 @@ def analyze(program: Program) -> AnalysisResult:
             )
 
     # Pass 2: walk for undefined Ident references
-    all_known = set(result.scope.keys()) | _ALWAYS_IN_SCOPE
+    all_known = set(result.scope.keys()) | _get_always_in_scope()
     _walk_refs(program, all_known, result.undefined_refs)
 
     return result

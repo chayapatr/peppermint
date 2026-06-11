@@ -111,7 +111,7 @@ def run_file(args):
 
     # Create cache store if @cache annotations are present, --cache flag set, or frontmatter cache: true
     def _has_cache_annotation(src: str) -> bool:
-        return "@cache" in src
+        return "@cache" in src or "@row_cache" in src
 
     cache = None
     if args.cache or config.get("cache", False) or _has_cache_annotation(src):

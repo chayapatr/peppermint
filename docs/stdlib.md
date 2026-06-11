@@ -33,6 +33,10 @@
 | `slice(list, start, end)` | Slice a list (inclusive end) |
 | `get(list, i)` | Get element at index — always positional |
 | `find(table, col, value)` | Find first row where `col` equals `value` — returns `none` if not found |
+| `cross(field, values)` | Duplicate every row once per value in `values`, adding `field` as a new column |
+| `flatten(field)` | Explode a list-valued column into one row per element — dict items spread as columns |
+| `first(list)` | First element of a list — `none` if empty |
+| `last(list)` | Last element of a list — `none` if empty |
 | `print(value)` | Print and pass through |
 | `halt(message?)` | Stop execution immediately with exit code 1 |
 | `str(value)` | Convert to string |
@@ -47,23 +51,29 @@ Use annotations instead of kwargs for execution behavior:
 |---|---|
 | `@concurrent(n)` | Run the step over each row using n threads. Works on any step or declaration |
 | `@retry(n)` | Retry the step up to n times on exception |
-| `@until(cond, max: n)` | Retry step or `( )` block on rows where condition is false, up to max rounds. Rows still failing go to `.errors` |
-| `@cache` | Cache this step's result. Step-level for whole-dataframe ops; row-level for `ml.llm` and `ml.embed` |
+| `@cache` | Cache the whole step by input fingerprint — skips the step on rerun if input is unchanged. Use for deterministic whole-dataframe steps (`ml.kmeans`, `ml.umap`) |
+| `@row_cache` | Cache each row's result independently by content hash. On rerun, only uncached rows are recomputed. Failed rows are never cached. Use with `ml.llm`, `ml.embed` |
+| `@progress` | Show a live progress bar on stderr as rows complete. Works alongside `@concurrent` and `@row_cache` |
 
 ```
-# Parallel embed with caching
+# Per-row embed with row-level caching
 |> add(embedding: ml.embed(...))
     @concurrent(50)
-    @cache
+    @row_cache
 
-# LLM with retry, until, and cache — the full pattern
+# LLM with retry and row-level caching — failures retry on next run
 |> add(label: ml.llm(...))
     @concurrent(10)
     @retry(3)
-    @until(it.label != none, max: 5)
-    @cache
+    @row_cache
 
-# Cache a deterministic expensive step
+# Live progress bar while running
+|> add(label: ml.llm(...))
+    @concurrent(10)
+    @row_cache
+    @progress
+
+# Cache a deterministic whole-dataframe step
 |> ml.kmeans(k: 5..12, on: "embedding", out: "cluster")
     @cache
 
@@ -151,7 +161,7 @@ val = env.get("OPTIONAL_KEY")
 
 `model:` shorthand on `kmeans`/`umap`/`ols`: loads from file if it exists, otherwise fits and saves.
 
-`ml.embed` and `ml.llm` use row-level caching when `--cache` is enabled — only new rows hit the API on rerun.
+Use `@row_cache` on any `add` step with `ml.embed` or `ml.llm` for per-row caching — only uncached rows hit the API on rerun. Failed rows are never cached and are retried automatically.
 
 ---
 

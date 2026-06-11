@@ -1,17 +1,42 @@
 # Changelog
 
-## 0.4.0a3 — 2026-05-29
+## 0.4.0a3 — 2026-06-02
 
-### Runtime (bug fix)
+### Language (breaking)
 
-- **Row cache now propagates through `add`, `map`, `mapi`, `select`, `recover`** — previously, `ml.llm` or `ml.embed` nested inside these functions (e.g. `add(label: ml.llm(...))`) silently skipped row caching. The `_row_cache` handle is now threaded from `eval_call` → function → `make_row_fn` → `eval` → nested `eval_call`, so per-row caching works regardless of nesting depth. `each` was already correct since it runs full sub-pipes through the interpreter.
-- **`eval` accepts `row_cache`** — the top-level `eval` dispatcher now forwards `row_cache` to `eval_call` when encountering a `Call` node, closing the propagation gap for expressions evaluated outside a direct pipe step context.
-- **Step cache skipped when result has row errors** — previously, a step that partially failed (e.g. API quota exceeded mid-run) would write the partial result to step cache, preventing retries on the next run. Now, steps with any rows in `.errors` are not written to step cache. On rerun, successful rows are still served from row cache; only failed rows hit the API again.
+- **`@until` removed** — use `@retry(n)` with a function that raises on bad output instead. `@until` was redundant and added implementation complexity.
+- **`ml.llm` and `ml.embed` no longer handle `_row_cache` internally** — use `@row_cache` annotation instead.
+
+### Language
+
+- **`@progress`** — annotation on any pipe step; shows a live progress bar on stderr as rows complete. Works with `@concurrent` and `@row_cache`. Purely observational — does not affect execution order or results.
+  ```
+  |> add(transcript: sim.simulate(...))
+      @concurrent(10)
+      @row_cache
+      @progress
+  ```
+  Output: `  [████████░░░░░░░░░░░░] 4/10`
+- **`@row_cache`** — new annotation for per-row caching. Caches each row independently by content hash; failed rows are never cached and are retried on next run. When all rows succeed, also writes a step cache entry so subsequent reruns skip the row loop entirely. Step summary shows `[row_cache | N run, M cached]`.
+
+### Standard library
+
+- **`load` / `save` support `.yaml` / `.yml` and `.txt`** — YAML files return the parsed object; TXT files return `{line, index}` rows.
+- **`cross(field, values)`** — duplicates every row once per value in `values`, adding `field` as a new column.
+- **`flatten(field)`** — explodes a list-valued column into one row per element, spreading dict items as columns.
+- **`first(list)`** / **`last(list)`** — return the first or last element, or `none` if empty.
+
+### Runtime
+
+- **`interpreter.py` split into `runtime.py` and `annotations.py`** — runtime types (`Ok`, `Err`, `Env`, `PepError`, etc.) live in `runtime.py`; annotation execution engine in `annotations.py`. All existing imports from `peppermint.interpreter` still work.
+- **Annotation execution redesigned as composable wrappers** — each annotation (`@retry`, `@row_cache`, `@progress`) is a wrapper function that transforms a `run_row` callable. Adding new annotations requires only a new wrapper, with no changes to dispatch or other annotations.
+- **`ml.llm(format: "json")` raises on parse failure** — previously returned `none` silently. Now raises `ValueError`, routing the row to `.errors` for retry.
+- **Object literals unwrap `Ok` wrappers** — field values in `{role: fn(it)}` are now automatically unwrapped.
+- **Step cache skipped when result has row errors** — partial failures are never cached, so failed rows are always retried on next run.
 
 ### ml
 
-- **`ml.llm(source: "anthropic")`** — Anthropic Claude models now supported. Uses the `anthropic` SDK (included in `peppermint-lang[ml]`). Same interface as `"openai"` and `"deepinfra"`.
-- **`ml.llm` prints progress** — each uncached call prints `HH:MM:SS [llm] <model>` to stdout; each row cache hit prints `HH:MM:SS [cache hit]`. Cached hits from step cache are silent (the step summary line already shows `[cached]`).
+- **`ml.llm(source: "anthropic")`** — Anthropic Claude models supported via the `anthropic` SDK. Same interface as `"openai"` and `"deepinfra"`.
 
 ---
 
@@ -46,7 +71,6 @@
 - **`env.KEY`** — bare field access on `env` reads environment variables directly; `env.OPENAI_API_KEY` preferred over `env.get("OPENAI_API_KEY")`
 - **`@concurrent(n)`** — annotation on any pipe step or declaration; runs the step over each row in a thread pool with n workers. Replaces `concurrent:` kwarg
 - **`@retry(n)`** — annotation; retries the step on exception up to n times
-- **`@until(cond, max: n)`** — annotation on a step or `( )` block; retries rows where condition is false up to max rounds; failures go to `.errors`
 - **`each` lambda form** — `|> each(by: "col", grp -> grp |> ...)` equivalent to block form
 
 ### Runtime
@@ -64,7 +88,7 @@
 - **`select("a", b: it.x + 1)`** — keyword args compute or rename fields inline
 - **`recover(field: expr)`** — move error rows back into data with a fallback value or expression; use after a step that may fail
 - **`int(value)`** — returns `none` for `NaN` and `pandas.NA` instead of raising
-- **`ml.llm(format: "json")`** — returns `none` on JSON parse failure (instead of raising), allowing `@until` to retry
+- **`ml.llm(format: "json")`** — returns `none` on JSON parse failure (instead of raising)
 - **`ml.kmeans`** — writes `{ model, k }` to `ctx.artifacts["kmeans"]`
 - **`ml.umap`** — writes `{ model }` to `ctx.artifacts["umap"]`
 - **`ml.ols`** — writes `{ model, r2, coefficients }` to `ctx.artifacts["ols"]`

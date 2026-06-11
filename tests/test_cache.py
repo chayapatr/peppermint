@@ -136,21 +136,175 @@ def test_step_cache_skips_execution(tmp_path):
 
 
 def test_row_cache_skips_api_call(tmp_path):
-    """Verify ml.embed skips the API call when row is cached."""
-    import unittest.mock as mock
+    """Verify @row_cache skips the function call when row is already cached."""
+    from peppermint.parser import parse
+    from peppermint.interpreter import Interpreter
+    from peppermint.stdlib import build_global_env
     from peppermint.cache import Cache, cache_key_for_row
-    from peppermint.libs.ml import embed
+    from peppermint.context import Context
 
+    call_count = {"n": 0}
+
+    def expensive(data, _interp=None, _env=None, **_):
+        rows = data.data if isinstance(data, Context) else data
+        result = []
+        for row in rows:
+            call_count["n"] += 1
+            result.append({**row, "out": row["x"] * 2})
+        return Context(data=result)
+
+    env = build_global_env()
+    env.set("expensive", expensive)
+
+    src = '[{ x: 1 }, { x: 2 }, { x: 3 }] |> expensive()\n    @row_cache'
     cache = Cache(str(tmp_path / "test.pep"))
-    rk = cache_key_for_row({"text": "hello"}, "ml.embed(source=local,model=test)")
-    cache.set_row(rk, [0.1, 0.2, 0.3])
 
-    with mock.patch("peppermint.libs.ml._client_cache", {}):
-        with mock.patch("sentence_transformers.SentenceTransformer") as MockST:
-            result = embed("hello", source="local", model="test", _row_cache=cache)
+    # First run — all 3 rows computed
+    Interpreter(env, quiet=True, cache=cache).run(parse(src))
+    assert call_count["n"] == 3
 
-    assert result == [0.1, 0.2, 0.3]
-    MockST.assert_not_called()  # API never touched
+    # Second run — all 3 rows served from row cache
+    call_count["n"] = 0
+    Interpreter(env, quiet=True, cache=cache).run(parse(src))
+    assert call_count["n"] == 0  # no calls, all cached
+
+
+def _make_row_fn(call_count):
+    """Helper: a per-row function that tracks how many times it's called."""
+    from peppermint.context import Context
+
+    def fn(data, _interp=None, _env=None, **_):
+        rows = data.data if isinstance(data, Context) else data
+        result = []
+        for row in rows:
+            call_count["n"] += 1
+            result.append({**row, "out": row["x"] * 2})
+        return Context(data=result)
+
+    return fn
+
+
+def test_row_cache_partial_failure_retries_failed_rows(tmp_path):
+    """Failed rows are not cached -- they are retried on the next run."""
+    from peppermint.parser import parse
+    from peppermint.interpreter import Interpreter
+    from peppermint.stdlib import build_global_env
+    from peppermint.context import Context
+
+    call_count = {"n": 0}
+
+    def fn(data, _interp=None, _env=None, **_):
+        rows = data.data if isinstance(data, Context) else data
+        result = []
+        for row in rows:
+            call_count["n"] += 1
+            if row["x"] == 2:
+                raise RuntimeError("simulated failure")
+            result.append({**row, "out": row["x"] * 10})
+        return Context(data=result)
+
+    env = build_global_env()
+    env.set("fn", fn)
+    src = '[{ x: 1 }, { x: 2 }, { x: 3 }] |> fn()\n    @row_cache'
+    cache = Cache(str(tmp_path / "test.pep"))
+
+    # Run 1: rows 1 and 3 succeed, row 2 fails
+    Interpreter(env, quiet=True, cache=cache).run(parse(src))
+    assert call_count["n"] == 3
+
+    # Run 2: rows 1 and 3 served from cache, row 2 retried
+    call_count["n"] = 0
+    Interpreter(env, quiet=True, cache=cache).run(parse(src))
+    assert call_count["n"] == 1  # only row 2 retried
+
+
+def test_row_cache_step_cache_written_when_fully_done(tmp_path):
+    """After all rows succeed, step cache is written -- next rerun skips everything."""
+    from peppermint.parser import parse
+    from peppermint.interpreter import Interpreter
+    from peppermint.stdlib import build_global_env
+
+    call_count = {"n": 0}
+    env = build_global_env()
+    env.set("fn", _make_row_fn(call_count))
+    src = '[{ x: 1 }, { x: 2 }, { x: 3 }] |> fn()\n    @row_cache'
+    cache = Cache(str(tmp_path / "test.pep"))
+
+    # Run 1: all rows computed, step cache written at end
+    Interpreter(env, quiet=True, cache=cache).run(parse(src))
+    assert call_count["n"] == 3
+
+    # Run 2: step cache hit -- fn never called, not even for row cache lookup
+    call_count["n"] = 0
+    Interpreter(env, quiet=True, cache=cache).run(parse(src))
+    assert call_count["n"] == 0
+
+
+def test_row_cache_no_step_cache_when_errors(tmp_path):
+    """If any row fails, step cache is NOT written -- next rerun goes through row cache."""
+    from peppermint.parser import parse
+    from peppermint.interpreter import Interpreter
+    from peppermint.stdlib import build_global_env
+    from peppermint.context import Context
+
+    attempt = {"n": 0}
+
+    def fn(data, _interp=None, _env=None, **_):
+        rows = data.data if isinstance(data, Context) else data
+        result = []
+        for row in rows:
+            attempt["n"] += 1
+            if row["x"] == 3:
+                raise RuntimeError("fail")
+            result.append({**row, "out": row["x"]})
+        return Context(data=result)
+
+    env = build_global_env()
+    env.set("fn", fn)
+    src = '[{ x: 1 }, { x: 2 }, { x: 3 }] |> fn()\n    @row_cache'
+    cache = Cache(str(tmp_path / "test.pep"))
+
+    # Run 1: row 3 fails, step cache NOT written
+    Interpreter(env, quiet=True, cache=cache).run(parse(src))
+    assert attempt["n"] == 3
+
+    # Run 2: must go through row cache (not step cache), rows 1+2 cached, row 3 retried
+    attempt["n"] = 0
+    Interpreter(env, quiet=True, cache=cache).run(parse(src))
+    assert attempt["n"] == 1  # only row 3 retried, not a full step cache hit
+
+
+def test_row_cache_new_rows_run_existing_cached(tmp_path):
+    """Adding new rows reruns only the new ones -- existing rows served from cache."""
+    from peppermint.parser import parse
+    from peppermint.interpreter import Interpreter
+    from peppermint.stdlib import build_global_env
+
+    call_count = {"n": 0}
+    env = build_global_env()
+
+    def fn(data, _interp=None, _env=None, **_):
+        from peppermint.context import Context
+        rows = data.data if isinstance(data, Context) else data
+        result = []
+        for row in rows:
+            call_count["n"] += 1
+            result.append({**row, "out": row["x"] * 2})
+        return Context(data=result)
+
+    env.set("fn", fn)
+    cache = Cache(str(tmp_path / "test.pep"))
+
+    # Run 1: 2 rows
+    src1 = '[{ x: 1 }, { x: 2 }] |> fn()\n    @row_cache'
+    Interpreter(env, quiet=True, cache=cache).run(parse(src1))
+    assert call_count["n"] == 2
+
+    # Run 2: 3 rows (1 new) — existing 2 cached, only new row runs
+    call_count["n"] = 0
+    src2 = '[{ x: 1 }, { x: 2 }, { x: 3 }] |> fn()\n    @row_cache'
+    Interpreter(env, quiet=True, cache=cache).run(parse(src2))
+    assert call_count["n"] == 1  # only x=3 is new
 
 
 def test_cache_off_by_default(tmp_path):

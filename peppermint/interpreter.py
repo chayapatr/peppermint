@@ -1,105 +1,16 @@
 from __future__ import annotations
-import inspect
-from dataclasses import dataclass
 from typing import Any
 from .ast_nodes import *
+from .runtime import (
+    Ok, Err, PmFunction, PmRange, ColRef, _ColProxy,
+    Env, PepError, _TailCall, _check_accepts_interp,
+)
 
-_fn_accepts_interp: dict = {}
-
-def _check_accepts_interp(fn) -> bool:
-    """Return True if fn accepts **kwargs or explicit _interp parameter."""
-    cached = _fn_accepts_interp.get(id(fn))
-    if cached is not None:
-        return cached
-    try:
-        sig = inspect.signature(fn)
-        result = any(
-            p.kind == inspect.Parameter.VAR_KEYWORD or p.name == '_interp'
-            for p in sig.parameters.values()
-        )
-    except (ValueError, TypeError):
-        result = False
-    _fn_accepts_interp[id(fn)] = result
-    return result
-
-
-# --- Tail call sentinel ---
-
-@dataclass
-class _TailCall:
-    fn: "PmFunction"
-    args: list
-    env: "Env"
-
-
-# --- Runtime values ---
-
-@dataclass
-class Ok:
-    value: Any
-    def __repr__(self): return f"Ok({self.value!r})"
-
-@dataclass
-class Err:
-    msg: str
-    cause: "PepError | None" = None
-    def __repr__(self): return f"Err({self.msg!r})"
-
-@dataclass
-class PmFunction:
-    params: list[str]
-    body: Any   # Expr
-    closure: "Env"
-
-    def __repr__(self): return f"<fn({', '.join(self.params)})>"
-
-@dataclass
-class PmRange:
-    start: int
-    end: int
-
-@dataclass
-class ColRef:
-    """Reference to a column across all rows — produced by col.field."""
-    field: str
-    def __repr__(self): return f"col.{self.field}"
-
-class _ColProxy:
-    """Sentinel object bound to 'col' in the global env."""
-    def __getattr__(self, field: str) -> ColRef:
-        return ColRef(field)
-    def __repr__(self): return "col"
-
-
-# --- Environment ---
-
-class Env:
-    def __init__(self, parent: "Env | None" = None):
-        self._vars: dict[str, Any] = {}
-        self.parent = parent
-
-    def get(self, name: str, loc=None) -> Any:
-        if name in self._vars:
-            return self._vars[name]
-        if self.parent:
-            return self.parent.get(name, loc)
-        raise PepError(f"undefined variable '{name}'", loc=loc, span=len(name))
-
-    def set(self, name: str, value: Any):
-        self._vars[name] = value
-
-    def extend(self, bindings: dict[str, Any]) -> "Env":
-        child = Env(parent=self)
-        for k, v in bindings.items():
-            child.set(k, v)
-        return child
-
-
-class PepError(Exception):
-    def __init__(self, msg: str, loc: "Loc | None" = None, span: int = 0):
-        super().__init__(msg)
-        self.loc = loc
-        self.span = span
+# Re-export runtime types so existing `from .interpreter import X` still works
+__all__ = [
+    "Ok", "Err", "PmFunction", "PmRange", "ColRef",
+    "Env", "PepError", "Interpreter",
+]
 
 
 # --- Interpreter ---
@@ -292,16 +203,20 @@ class Interpreter:
         result = {}
         for entry in node.entries:
             if isinstance(entry, ObjField):
-                result[entry.key] = self.eval(entry.value, env)
+                val = self.eval(entry.value, env)
+                result[entry.key] = val.value if isinstance(val, Ok) else val
             elif isinstance(entry, ObjSpread):
                 val = self.eval(entry.obj, env)
+                if isinstance(val, Ok):
+                    val = val.value
                 if isinstance(val, dict):
                     result.update(val)
                 else:
                     raise PepError(f"spread requires an object, got {type(val).__name__}")
             elif isinstance(entry, ObjShorthand):
                 try:
-                    result[entry.key] = env.get(entry.key)
+                    val = env.get(entry.key)
+                    result[entry.key] = val.value if isinstance(val, Ok) else val
                 except Exception:
                     result[entry.key] = True
         return result
@@ -340,8 +255,10 @@ class Interpreter:
                 if isinstance(expr, (Ident, FieldAccess)):
                     expr = Call(func=expr, args=[], kwargs={}, block=None, loc=expr.loc)
 
-                # Cache check — only for steps with @cache annotation
-                step_cache = self._cache if self._cache and any(a["name"] == "cache" for a in step.annotations) else None
+                # Cache check — for steps with @cache or @row_cache annotation
+                has_cache     = any(a["name"] == "cache"     for a in step.annotations)
+                has_row_cache = any(a["name"] == "row_cache" for a in step.annotations)
+                step_cache = self._cache if self._cache and (has_cache or has_row_cache) else None
                 ck = None
                 if step_cache:
                     from .cache import cache_key_for_step
@@ -358,6 +275,7 @@ class Interpreter:
                             self._print_step(step.expr, before, after_list, depth=depth, cached=True, errors_before=errors_before, errors_after=errors_after)
                         continue
 
+                self._last_rc_stats = None
                 step_result = self._eval_step_with_annotations(expr, value, env, depth, step.annotations, step_cache=step_cache)
                 result = step_result if isinstance(step_result, (Ok, Err)) else Ok(step_result)
 
@@ -379,7 +297,8 @@ class Interpreter:
             after_list = after.data if isinstance(after, _Ctx) else (after if isinstance(after, list) else None)
             errors_after = len(after.errors) if isinstance(after, _Ctx) else 0
             if show and after_list is not None:
-                self._print_step(step.expr, before, after_list, depth=depth, errors_before=errors_before, errors_after=errors_after)
+                rc = getattr(self, "_last_rc_stats", None) or {}
+                self._print_step(step.expr, before, after_list, depth=depth, errors_before=errors_before, errors_after=errors_after, row_cache_hits=rc.get("hits", 0), row_cache_total=rc.get("total", 0))
 
         # If the pipe started with an assignment (x = source |> ...), update x to the final result
         if isinstance(first, Assign):
@@ -388,7 +307,7 @@ class Interpreter:
 
         return result
 
-    def _print_step(self, call_node, before: list | None, after: list, depth: int = 0, cached: bool = False, errors_before: int = 0, errors_after: int = 0):
+    def _print_step(self, call_node, before: list | None, after: list, depth: int = 0, cached: bool = False, errors_before: int = 0, errors_after: int = 0, row_cache_hits: int = 0, row_cache_total: int = 0):
         import sys
         indent = "  " * depth
         name = self._call_name(call_node)
@@ -419,112 +338,24 @@ class Interpreter:
                 pass
         if cached:
             line += f"  \033[2m[cached]\033[0m"
+        if row_cache_total > 0:
+            run = row_cache_total - row_cache_hits
+            line += f"  \033[2m[row_cache | {run} run, {row_cache_hits} cached]\033[0m"
         print(line, file=sys.stderr)
 
-    def _resolve_annotation_arg(self, arg, env):
-        """Evaluate an annotation argument -- plain int/str or an AST node."""
-        if isinstance(arg, dict) and "key" in arg:
-            return arg["key"], self.eval(arg["value"], env)
-        if isinstance(arg, (int, float, str, bool)):
-            return arg
-        return self.eval(arg, env)
-
     def _eval_step_with_annotations(self, expr, value, env, depth, annotations, step_cache=None):
-        """Execute a pipe step, applying @concurrent, @retry, @until, @cache annotations."""
-        from .context import Context
-
-        # Extract annotation values
-        concurrent_n = None
-        retry_n = 0
-        until_cond = None
-        until_max = 5
-
-        for ann in annotations:
-            name = ann["name"]
-            args = ann["args"]
-            if name == "concurrent" and args:
-                concurrent_n = int(self._resolve_annotation_arg(args[0], env))
-            elif name == "retry" and args:
-                retry_n = int(self._resolve_annotation_arg(args[0], env))
-            elif name == "until":
-                for a in args:
-                    if isinstance(a, dict) and a.get("key") == "max":
-                        until_max = int(self.eval(a["value"], env))
-                    elif not isinstance(a, dict):
-                        until_cond = a
-
-        def _run_once(input_value):
-            return self.eval_call(expr, input_value, env, depth=depth, row_cache=step_cache)
-
-        def _run_with_retry(input_value):
-            last_err = None
-            for attempt in range(retry_n + 1):
-                try:
-                    r = _run_once(input_value)
-                    if not isinstance(r, Err):
-                        return r
-                    last_err = r
-                except Exception as e:
-                    last_err = Err(str(e))
-            return last_err
-
-        run_fn = _run_with_retry if retry_n else _run_once
-
-        # @concurrent: run step row-by-row in a thread pool
-        if concurrent_n and isinstance(value, Context):
-            from concurrent.futures import ThreadPoolExecutor
-            rows = value.data
-            def _run_row(row):
-                row_ctx = Context(data=[row], artifacts=value.artifacts, errors=[])
-                r = run_fn(row_ctx)
-                rv = r.value if isinstance(r, Ok) else None
-                if isinstance(rv, Context):
-                    return rv.data, rv.errors
-                return [row], [{"_error": str(r), "_step": self._call_name(expr)}] if isinstance(r, Err) else ([row], [])
-            with ThreadPoolExecutor(max_workers=concurrent_n) as pool:
-                parts = list(pool.map(_run_row, rows))
-            merged_data = []
-            merged_errors = list(value.errors)
-            for data_part, err_part in parts:
-                merged_data.extend(data_part)
-                merged_errors.extend(err_part)
-            result = Ok(Context(data=merged_data, artifacts=value.artifacts, errors=merged_errors))
-        else:
-            result = run_fn(value)
-
-        # @until: retry rows that don't satisfy the condition
-        if until_cond is not None and isinstance(result, Ok):
-            ctx = result.value if isinstance(result.value, Context) else Context(data=result.value if isinstance(result.value, list) else [])
-            passing = []
-            pending = list(ctx.data)
-            errors = list(ctx.errors)
-            for attempt in range(until_max):
-                if not pending:
-                    break
-                new_passing = []
-                new_pending = []
-                for row in pending:
-                    try:
-                        passes = self.eval(until_cond, env.extend({"it": row}))
-                        if isinstance(passes, Ok): passes = passes.value
-                    except Exception:
-                        passes = False
-                    if passes:
-                        new_passing.append(row)
-                    else:
-                        new_pending.append({**row, "_attempts": row.get("_attempts", 0) + 1})
-                passing.extend(new_passing)
-                if new_pending:
-                    retry_ctx = Context(data=new_pending, artifacts=ctx.artifacts, errors=[])
-                    retry_result = run_fn(retry_ctx)
-                    rv = retry_result.value if isinstance(retry_result, Ok) else None
-                    pending = rv.data if isinstance(rv, Context) else (rv if isinstance(rv, list) else [])
-                else:
-                    pending = []
-            for row in pending:
-                errors.append({**row, "_step": self._call_name(expr)})
-            result = Ok(Context(data=passing, artifacts=ctx.artifacts, errors=errors))
-
+        from .annotations import parse_annotations, eval_with_annotations
+        cfg = parse_annotations(annotations, self.eval, env)
+        result, rc_stats = eval_with_annotations(
+            expr, value, annotations, cfg,
+            cache=self._cache,
+            call_name=self._call_name(expr),
+            eval_call=self.eval_call,
+            env=env,
+            depth=depth,
+            step_cache=step_cache,
+        )
+        self._last_rc_stats = rc_stats
         return result
 
     def _call_name(self, node) -> str:
@@ -586,15 +417,10 @@ class Interpreter:
                     return v.value if isinstance(v, Ok) else v
                 args = pre + [_unwrap_ok(self.eval(a, env)) for a in node.args]
                 kwargs = {k: _unwrap_ok(self.eval(v, env)) for k, v in node.kwargs.items()}
-            _VOLATILE = {"embed", "llm"}
-            fn_name = self._call_name(node.func).split(".")[-1]
             extra = {}
             if _check_accepts_interp(fn):
                 extra = {"_block": node.block, "_env": env, "_interp": self, "_depth": depth}
-            if row_cache and fn_name in _VOLATILE:
-                extra["_row_cache"] = row_cache
-            # Pass row_cache to any stdlib function that uses make_row_fn internally
-            if row_cache and extra and fn_name not in _VOLATILE:
+            if row_cache and extra:
                 extra["_row_cache"] = row_cache
             result = fn(*args, **kwargs, **extra) if extra else fn(*args, **kwargs)
             # Unwrap nested Ok(Ok(...))

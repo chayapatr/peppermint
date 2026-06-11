@@ -248,25 +248,16 @@ _client_cache: dict = {}
 
 @pep_fn_lazy
 @pep_signature("ml.embed(text: str, source: str, model: str, apikey: str) -> List<Num>")
-def embed(text, source=None, model=None, apikey=None, _row_cache=None, **_):
-    """Embed a single text string. Use inside `add`.
+def embed(text, source=None, model=None, apikey=None, **_):
+    """Embed a single text string. Use inside `add` with `@row_cache` for per-row caching.
 
 `source`: `"deepinfra"` or `"local"`.
 `model`: model name (e.g. `"Qwen/Qwen3-Embedding-4B"` or a local SentenceTransformer name).
-`apikey`: required for `"deepinfra"`.
-
-Example: `add(embedding: ml.embed(it.text, source: "deepinfra", model: "...", apikey: env.get("KEY")), concurrent: 50, retry: 3)`"""
+`apikey`: required for `"deepinfra"`."""
     if source is None:
         raise ValueError("embed: source is required (e.g. source: \"deepinfra\" or source: \"local\")")
     if model is None:
         raise ValueError("embed: model is required")
-
-    if _row_cache is not None:
-        from ..cache import cache_key_for_row
-        rk = cache_key_for_row({"text": text}, f"ml.embed(source={source},model={model})")
-        cached = _row_cache.get_row(rk)
-        if cached is not None:
-            return cached
 
     if source == "deepinfra":
         if apikey is None:
@@ -276,19 +267,15 @@ Example: `add(embedding: ml.embed(it.text, source: "deepinfra", model: "...", ap
         if ck not in _client_cache:
             _client_cache[ck] = OpenAI(api_key=apikey, base_url="https://api.deepinfra.com/v1/openai")
         resp = _client_cache[ck].embeddings.create(model=model, input=[text], encoding_format="float")
-        result = resp.data[0].embedding
+        return resp.data[0].embedding
     elif source == "local":
         from sentence_transformers import SentenceTransformer
         ck = ("local", model)
         if ck not in _client_cache:
             _client_cache[ck] = SentenceTransformer(model)
-        result = _client_cache[ck].encode([text])[0].tolist()
+        return _client_cache[ck].encode([text])[0].tolist()
     else:
         raise ValueError(f"embed: unknown source '{source}' (use 'deepinfra' or 'local')")
-
-    if _row_cache is not None:
-        _row_cache.set_row(rk, result)
-    return result
 
 
 
@@ -298,15 +285,15 @@ def _parse_llm_content(content, format):
         cleaned = re.sub(r"^```json\s*|^```\s*|```$", "", content.strip(), flags=re.MULTILINE).strip()
         try:
             return json.loads(cleaned)
-        except json.JSONDecodeError:
-            return None  # let @until retry
+        except json.JSONDecodeError as e:
+            raise ValueError(f"llm: JSON parse failed: {e}\n\nResponse was: {cleaned[:200]}")
     return content
 
 
 @pep_fn_lazy
 @pep_signature("ml.llm(prompt: str, source: str, model: str, apikey?: str, format?: str) -> str | Any")
-def llm(prompt, source=None, model=None, apikey=None, format=None, _row_cache=None, **_):
-    """Run a single LLM call. Use inside `add`.
+def llm(prompt, source=None, model=None, apikey=None, format=None, **_):
+    """Run a single LLM call. Use inside `add` with `@row_cache` for per-row caching.
 
 `source`: `"deepinfra"`, `"openai"`, or `"anthropic"`.
 `model`: model name (e.g. `"meta-llama/Llama-3.3-70B-Instruct"` or `"claude-opus-4-8"`).
@@ -316,18 +303,6 @@ def llm(prompt, source=None, model=None, apikey=None, format=None, _row_cache=No
         raise ValueError("llm: source is required (e.g. source: \"openai\", \"anthropic\", or \"deepinfra\")")
     if model is None:
         raise ValueError("llm: model is required")
-
-    if _row_cache is not None:
-        from ..cache import cache_key_for_row
-        rk = cache_key_for_row({"prompt": prompt}, f"ml.llm(source={source},model={model},format={format})")
-        cached = _row_cache.get_row(rk)
-        if cached is not None:
-            from datetime import datetime
-            print(f"  {datetime.now().strftime('%H:%M:%S')} [cache hit]", flush=True)
-            return cached
-
-    from datetime import datetime
-    print(f"  {datetime.now().strftime('%H:%M:%S')} [llm] {model}", flush=True)
 
     if source in ("deepinfra", "openai"):
         if apikey is None and source == "deepinfra":
@@ -346,7 +321,7 @@ def llm(prompt, source=None, model=None, apikey=None, format=None, _row_cache=No
             model=model,
             messages=[{"role": "user", "content": prompt}],
         )
-        result = _parse_llm_content(resp.choices[0].message.content, format)
+        return _parse_llm_content(resp.choices[0].message.content, format)
     elif source == "anthropic":
         if apikey is None:
             raise ValueError("llm: apikey is required for source 'anthropic'")
@@ -360,13 +335,9 @@ def llm(prompt, source=None, model=None, apikey=None, format=None, _row_cache=No
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
-        result = _parse_llm_content(resp.content[0].text, format)
+        return _parse_llm_content(resp.content[0].text, format)
     else:
         raise ValueError(f"llm: unknown source '{source}' (use 'openai', 'anthropic', or 'deepinfra')")
-
-    if _row_cache is not None and result is not None:
-        _row_cache.set_row(rk, result)
-    return result
 
 
 @pep_signature("ml.dist(a: List<Num>, b: List<Num>, metric?: str) -> Num")

@@ -97,14 +97,14 @@ load("sales.csv")
 use ml
 use env
 
-load("posts.csv")
+result = load("posts.csv")
   |> add(label: ml.llm(it.text,
       source: "openai", model: "gpt-4o",
       apikey: env.OPENAI_API_KEY, format: "json"))
       @concurrent(10)
       @retry(3)
-      @until(it.label != none, max: 5)
-      @cache
+      @row_cache
+      @progress
 
 match(len(result.errors),
   == 0: result.data |> save("output.csv"),
@@ -112,7 +112,7 @@ match(len(result.errors),
 )
 ```
 
-`@cache` on `ml.llm` caches each row by content hash. Failed rows are never cached, so rerunning retries them automatically.
+`@row_cache` on `ml.llm` caches each row by content hash. Failed rows are never cached, so rerunning retries them automatically. `@progress` shows a live progress bar as rows complete.
 
 </details>
 

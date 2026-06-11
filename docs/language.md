@@ -287,6 +287,31 @@ row[field]    # "alice"
 data |> map(it[field])
 ```
 
+### `cross` and `flatten`
+
+`cross(field, values)` duplicates every row once per value, adding `field` as a new column. Useful for running a pipeline across multiple models or conditions:
+
+```
+load("posts.csv")
+  |> cross("model", ["gpt-4o", "claude-opus-4-8"])
+  |> add(label: ml.llm(it.text, source: "openai", model: it.model, apikey: env.KEY))
+```
+
+`flatten(field)` explodes a list-valued column into one row per element. Dict items in the list are spread as columns:
+
+```
+load("data.csv")
+  |> add(scenarios: ["a", "b", "c"])
+  |> flatten("scenarios")   # one row per scenario
+```
+
+### `first` and `last`
+
+```
+first(lst)   # first element, or none if empty
+last(lst)    # last element, or none if empty
+```
+
 ---
 
 ## Operators
@@ -429,71 +454,67 @@ load("posts.csv")
 
 ### `@retry(n)`
 
-Retry the step up to `n` times on exception before writing `none`:
+Retry the step up to `n` times on exception:
 
 ```
 |> add(label: ml.llm(...))
     @retry(3)
-```
-
-### `@until(cond, max: n)`
-
-Retry the step (or block) on rows where `cond` is false, up to `max` rounds. Rows that pass are frozen; rows still failing after `max` rounds go to `.errors`:
-
-```
-# Single step
-|> add(label: ml.llm(...))
-    @until(it.label != none, max: 5)
-
-# Multi-step block
-(
-  |> add(label: ml.llm(...))
-  |> add(label: match(it.label, == none: none, _: it.label))
-) @until(it.label != none, max: 5)
-```
-
-Combine with `@retry`:
-
-```
-|> add(label: ml.llm(...))
-    @retry(3)
-    @until(it.label != none, max: 5)
 ```
 
 ### `@cache`
 
-Cache this step's result across runs. Works differently depending on the step shape:
-
-- Whole-dataframe steps (`ml.kmeans`, `ml.umap`, `each`): caches the full output by input fingerprint
-- Per-row steps (`ml.llm`, `ml.embed`): caches each row independently; failed rows are never cached and are retried on the next run
+Cache the whole step by input fingerprint. The step is skipped entirely on rerun if input is unchanged. Use for deterministic whole-dataframe steps:
 
 ```
 |> ml.kmeans(k: 5..12, on: "embedding", out: "cluster")
     @cache
 
-|> add(label: ml.llm(...))
-    @retry(3)
-    @until(it.label != none, max: 5)
+|> ml.umap(dims: 2, on: "embedding", out: "umap")
     @cache
+```
+
+### `@row_cache`
+
+Cache each row's result independently by content hash. On rerun, only uncached rows are recomputed — failed rows are never cached and are retried automatically. Use with `ml.llm` and `ml.embed`:
+
+```
+|> add(label: ml.llm(...))
+    @concurrent(10)
+    @retry(3)
+    @row_cache
+```
+
+Step output shows `[row_cache | N run, M cached]`.
+
+### `@progress`
+
+Show a live progress bar on stderr as rows complete. Works alongside `@concurrent` and `@row_cache`:
+
+```
+|> add(label: ml.llm(...))
+    @concurrent(10)
+    @row_cache
+    @progress
 ```
 
 ---
 
 ## Caching
 
-Add `@cache` to any pipe step to cache its result across runs:
+Two caching annotations for different step shapes:
+
+- `@cache` — for whole-dataframe steps (`ml.kmeans`, `ml.umap`): caches the full output by input fingerprint, skips the step entirely on rerun if unchanged
+- `@row_cache` — for per-row steps (`ml.llm`, `ml.embed`): caches each row independently; failed rows are never cached and are retried on next run
 
 ```
 load("data.csv")
   |> ml.kmeans(k: 5..12, on: "embedding", out: "cluster")
       @cache
   |> add(label: ml.llm(it.text, ...))
+      @concurrent(10)
       @retry(3)
-      @until(it.label != none, max: 5)
-      @cache
+      @row_cache
 ```
-
-For whole-dataframe steps (`ml.kmeans`, `ml.umap`), the entire output is cached by input fingerprint — unchanged input means the step is skipped. For per-row steps (`ml.llm`, `ml.embed`), each row is cached independently by content hash. Failed rows are never cached, so they are retried on the next run automatically.
 
 See [cache.md](cache.md) for the full reference.
 
