@@ -12,5 +12,8 @@ vscode-peppermint/node_modules/
 dump/
 .env
 
+# Cache
+.peppermint/
+
 # Build
 dist/

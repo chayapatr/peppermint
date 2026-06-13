@@ -181,8 +181,16 @@ class Interpreter:
             case "+":  return left + right
             case "-":  return left - right
             case "*":  return left * right
-            case "/":  return left / right
-            case "%":  return left % right
+            case "/":
+                try:
+                    return left / right
+                except ZeroDivisionError:
+                    raise PepError("division by zero", loc=node.loc)
+            case "%":
+                try:
+                    return left % right
+                except ZeroDivisionError:
+                    raise PepError("division by zero", loc=node.loc)
             case ">":  return left > right
             case "<":  return left < right
             case ">=": return left >= right
@@ -217,7 +225,8 @@ class Interpreter:
                 try:
                     val = env.get(entry.key)
                     result[entry.key] = val.value if isinstance(val, Ok) else val
-                except Exception:
+                except PepError:
+                    # { flag } sugar: undefined name becomes true (e.g. display: { legend })
                     result[entry.key] = True
         return result
 

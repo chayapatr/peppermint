@@ -97,6 +97,14 @@ def test_fingerprint_same_for_same_content():
     assert _fingerprint(ctx1) == _fingerprint(ctx2)
 
 
+def test_fingerprint_differs_for_different_middle_rows():
+    from peppermint.cache import _fingerprint
+    from peppermint.context import Context
+    ctx1 = Context(data=[{"id": 1}, {"id": 999}, {"id": 3}])
+    ctx2 = Context(data=[{"id": 1}, {"id": 888}, {"id": 3}])
+    assert _fingerprint(ctx1) != _fingerprint(ctx2)
+
+
 def test_step_cache_skips_execution(tmp_path):
     """Verify eval_pipe hits cache and does not re-execute the step."""
     from peppermint.parser import parse
@@ -305,6 +313,46 @@ def test_row_cache_new_rows_run_existing_cached(tmp_path):
     src2 = '[{ x: 1 }, { x: 2 }, { x: 3 }] |> fn()\n    @row_cache'
     Interpreter(env, quiet=True, cache=cache).run(parse(src2))
     assert call_count["n"] == 1  # only x=3 is new
+
+
+def test_tampered_file_returns_none(tmp_path):
+    from peppermint.cache import _Store
+    import secrets
+    key = secrets.token_bytes(32)
+    store = _Store(tmp_path / "cache", key)
+    store.set("k", {"data": [1, 2, 3]})
+    store._path("k").write_bytes(b"\x00" * 64)
+    assert store.get("k") is None
+
+
+def test_wrong_key_returns_none(tmp_path):
+    from peppermint.cache import _Store
+    import secrets
+    key_a, key_b = secrets.token_bytes(32), secrets.token_bytes(32)
+    _Store(tmp_path / "cache", key_a).set("k", {"secret": "value"})
+    assert _Store(tmp_path / "cache", key_b).get("k") is None
+
+
+def test_truncated_file_returns_none(tmp_path):
+    from peppermint.cache import _Store
+    import secrets
+    key = secrets.token_bytes(32)
+    store = _Store(tmp_path / "cache", key)
+    store.set("k", 42)
+    store._path("k").write_bytes(b"\x00" * 10)
+    assert store.get("k") is None
+
+
+def test_valid_entry_readable_alongside_tampered(tmp_path):
+    from peppermint.cache import _Store
+    import secrets
+    key = secrets.token_bytes(32)
+    store = _Store(tmp_path / "cache", key)
+    store.set("good", [1, 2, 3])
+    store.set("bad", "will be corrupted")
+    store._path("bad").write_bytes(b"\xff" * 64)
+    assert store.get("bad") is None
+    assert store.get("good") == [1, 2, 3]
 
 
 def test_cache_off_by_default(tmp_path):

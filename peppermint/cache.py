@@ -1,8 +1,10 @@
 from __future__ import annotations
 import hashlib
+import hmac as _hmac
 import json
 import os
 import pickle
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -15,16 +17,18 @@ def _sha256(*parts: str) -> str:
 
 
 def _fingerprint(value: Any) -> str:
-    """Fast fingerprint of a value for cache keying. Not cryptographically exact."""
+    """Content fingerprint of a value for cache keying."""
     try:
         from .context import Context
         if isinstance(value, Context):
             rows = value.data
-            n = len(rows)
             cols = sorted(rows[0].keys()) if rows else []
-            sample = json.dumps(rows[0], sort_keys=True, default=str) if rows else ""
-            tail = json.dumps(rows[-1], sort_keys=True, default=str) if n > 1 else ""
-            return _sha256(str(n), str(cols), sample, tail)
+            h = hashlib.sha256()
+            h.update(str(len(rows)).encode())
+            h.update(str(cols).encode())
+            for row in rows:
+                h.update(json.dumps(row, sort_keys=True, default=str).encode())
+            return h.hexdigest()
     except Exception:
         pass
     try:
@@ -50,21 +54,52 @@ def cache_key_for_row(row: dict, step_src: str) -> str:
     return _sha256(row_str, step_src)
 
 
+def _load_or_create_key(root: Path) -> bytes:
+    """Load the per-machine HMAC key from root/.key, creating it on first use."""
+    key_path = root / ".key"
+    if key_path.exists():
+        try:
+            return key_path.read_bytes()
+        except Exception:
+            pass
+    key = secrets.token_bytes(32)
+    try:
+        key_path.write_bytes(key)
+    except Exception:
+        pass
+    return key
+
+
 class _Store:
-    def __init__(self, cache_dir: Path):
+    """Pickle cache with HMAC-signed entries.
+
+    Every entry is stored as: 32-byte HMAC-SHA256 || pickle payload.
+    On read, the HMAC is verified before calling pickle.loads — a tampered
+    or externally-injected file fails the check and is treated as a cache
+    miss, so pickle.loads is never called on unverified data.
+    """
+
+    def __init__(self, cache_dir: Path, key: bytes):
         self._dir = cache_dir
         self._dir.mkdir(parents=True, exist_ok=True)
+        self._key = key
 
     def _path(self, key: str) -> Path:
-        return self._dir / key[:2] / key[2:]
+        return self._dir / key[:2] / (key[2:] + ".pkl")
 
     def get(self, key: str) -> Any | None:
         p = self._path(key)
         if not p.exists():
             return None
         try:
-            with open(p, "rb") as f:
-                return pickle.load(f)
+            raw = p.read_bytes()
+            if len(raw) < 32:
+                return None
+            mac, payload = raw[:32], raw[32:]
+            expected = _hmac.new(self._key, payload, "sha256").digest()
+            if not _hmac.compare_digest(mac, expected):
+                return None  # tampered; treat as miss rather than deserializing
+            return pickle.loads(payload)
         except Exception:
             return None
 
@@ -72,9 +107,14 @@ class _Store:
         p = self._path(key)
         p.parent.mkdir(parents=True, exist_ok=True)
         tmp = str(p) + ".tmp"
-        with open(tmp, "wb") as f:
-            pickle.dump(value, f)
-        os.replace(tmp, p)
+        try:
+            payload = pickle.dumps(value)
+            mac = _hmac.new(self._key, payload, "sha256").digest()
+            with open(tmp, "wb") as f:
+                f.write(mac + payload)
+            os.replace(tmp, p)
+        except Exception:
+            pass  # not serializable; skip caching silently
 
     def clear(self) -> None:
         import shutil
@@ -90,8 +130,10 @@ class Cache:
             root = Path(cache_dir)
         else:
             root = Path(pep_file_path).parent / ".peppermint"
-        self._steps = _Store(root / "cache")
-        self._rows  = _Store(root / "row_cache")
+        root.mkdir(parents=True, exist_ok=True)
+        key = _load_or_create_key(root)
+        self._steps = _Store(root / "cache", key)
+        self._rows  = _Store(root / "row_cache", key)
 
     # --- Step-level cache ---
 

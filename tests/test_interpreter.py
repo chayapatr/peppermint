@@ -1,6 +1,6 @@
 import pytest
 from peppermint.parser import parse
-from peppermint.interpreter import Interpreter, Ok, Err
+from peppermint.interpreter import Interpreter, Ok, Err, PepError
 from peppermint.stdlib import build_global_env
 
 
@@ -60,6 +60,20 @@ def test_unary_minus():     assert val("-1") == -1
 def test_unary_minus_float(): assert val("-3.14") == pytest.approx(-3.14)
 def test_unary_minus_expr(): assert val("-(2 + 3)") == -5
 def test_double_neg():      assert val("0 - -1") == 1
+def test_sub_space_adjacent_minus(): assert val("5 -1.5") == pytest.approx(3.5)
+
+def test_div_by_zero_raises():
+    with pytest.raises(PepError, match="division by zero"):
+        run("1 / 0")
+
+def test_mod_by_zero_raises():
+    with pytest.raises(PepError, match="division by zero"):
+        run("5 % 0")
+
+def test_div_by_zero_in_pipe_routes_to_errors():
+    c = ctx('[{ v: 0 }, { v: 2 }] |> add(x: 1 / it.v)')
+    assert len(c.errors) == 1
+    assert c.data[0]["x"] == pytest.approx(0.5)
 
 
 # --- Comparison ---
@@ -558,6 +572,12 @@ def test_interpolation_partial_failure_doesnt_kill_whole_string():
     # One valid {expr} and one invalid {key: val} — valid one still interpolates
     result = val('name = "alice"\n"hi {name} data: { x: 1 }"')
     assert result == "hi alice data: { x: 1 }"
+
+def test_interpolation_unclosed_brace_is_literal():
+    assert val('"hello {name"') == "hello {name"
+
+def test_interpolation_unclosed_brace_at_start():
+    assert val('"{unclosed"') == "{unclosed"
 
 
 # --- model shorthand resolves correctly ---

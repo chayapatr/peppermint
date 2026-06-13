@@ -9,11 +9,12 @@ from .ast_nodes import *
 import re
 
 _TOKEN_RE = re.compile(r"""
-    (?P<FLOAT>    -?(?:\d+\.(?!\.)|\.\d+)\d*(?:[eE][+-]?\d+)?   )  |
+    (?P<FLOAT>    (?:\d+\.(?!\.)|\.\d+)\d*(?:[eE][+-]?\d+)?      )  |
     (?P<SPREAD>   \.\.\.                                  )  |
     (?P<DOTDOT>   \.\.                                    )  |
     (?P<INT>      \d+                                     )  |
     (?P<STRING>   "(?:[^"\\]|\\.)*"                       )  |
+    (?P<UNTERM_STR> "(?:[^"\\]|\\.)*                      )  |
     (?P<ARROW>    ->                                      )  |
     (?P<PIPE>     \|>                                     )  |
     (?P<GTE>      >=                                      )  |
@@ -41,8 +42,9 @@ _TOKEN_RE = re.compile(r"""
     (?P<NL>       [\n;]+                                  )  |
     (?P<NAME>     [a-zA-Z_][a-zA-Z0-9_]*                  )  |
     (?P<WS>       [ \t]+                                  )  |
-    (?P<COMMENT>  \#[^\n]*                                )
-""", re.VERBOSE)
+    (?P<COMMENT>  \#[^\n]*                                )  |
+    (?P<UNKNOWN>  .                                       )
+""", re.VERBOSE | re.DOTALL)
 
 _KEYWORDS = {"true", "false", "none", "ns", "use", "as", "quiet", "match", "and", "or", "not"}
 
@@ -68,6 +70,10 @@ def tokenize(src: str) -> list[Token]:
         kind = m.lastgroup
         value = m.group()
         col = m.start() - line_start + 1
+        if kind == "UNKNOWN":
+            raise ParseError(f"unexpected character {value!r}", line, col)
+        if kind == "UNTERM_STR":
+            raise ParseError("unterminated string", line, col)
         if kind in ("WS", "COMMENT"):
             if "\n" in value:
                 count = value.count("\n")
@@ -272,14 +278,14 @@ class Parser:
             # () -> ...
             self._eat("RPAREN")
             if not self._at("ARROW"):
-                raise ParseError(self._cur().line, self._cur().col, "not a lambda")
+                raise ParseError("not a lambda", self._cur().line, self._cur().col)
             self._eat("ARROW")
             body = self._parse_lambda_body()
             return Lambda(params=[], body=body, loc=loc)
 
         # Try to collect NAME, NAME, ... then RPAREN ARROW
         if not self._at("NAME"):
-            raise ParseError(self._cur().line, self._cur().col, "not a lambda")
+            raise ParseError("not a lambda", self._cur().line, self._cur().col)
         params = [self._eat("NAME").value]
         self._skip_nl()
         while self._at("COMMA"):
@@ -289,7 +295,7 @@ class Parser:
             self._skip_nl()
         self._eat("RPAREN")
         if not self._at("ARROW"):
-            raise ParseError(self._cur().line, self._cur().col, "not a lambda")
+            raise ParseError("not a lambda", self._cur().line, self._cur().col)
         self._eat("ARROW")
         body = self._parse_lambda_body()
         return Lambda(params=params, body=body, loc=loc)
@@ -736,6 +742,10 @@ class Parser:
                 elif value[k] == "}":
                     depth -= 1
                 k += 1
+            if depth > 0:
+                # Unterminated interpolation — treat rest as literal text
+                parts.append(StrLit(value=value[j:], loc=loc))
+                break
             expr_src = value[j+1:k-1]
             try:
                 expr_node = parse(expr_src + "\n").body[0]

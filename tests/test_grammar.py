@@ -305,6 +305,15 @@ data |> add(label:
 
 # --- Full example from spec ---
 
+# --- Parse errors (err() helper was previously unused) ---
+
+def test_err_unterminated_string():    err('"hello')
+def test_err_unterminated_empty():     err('"')
+def test_err_unknown_char_dollar():    err('x $ y')
+def test_err_unknown_char_backtick():  err('`x`')
+def test_err_unknown_char_at_start():  err('$ x')
+
+
 def test_full_spec_example():
     ok("""
 use ml
